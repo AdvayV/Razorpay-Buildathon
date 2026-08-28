@@ -1,0 +1,112 @@
+import { after, NextResponse } from "next/server";
+import { writeAudit, getCheckoutResult, setCheckoutResult } from "@/lib/audit";
+import { formatInr } from "@/lib/catalog";
+import { MoneyPolicyError, validateMoneyAction, type CartLine } from "@/lib/policy";
+import { createPaymentLinkWithMcp } from "@/lib/razorpay-mcp";
+import { isTelegramConfigured, sendTelegramMessage } from "@/lib/telegram";
+
+type CheckoutBody = {
+  actionId?: unknown;
+  approved?: unknown;
+  items?: unknown;
+  simulateFailure?: unknown;
+};
+
+export async function POST(request: Request) {
+  let actionId = "unknown";
+  try {
+    const body = (await request.json()) as CheckoutBody;
+    if (typeof body.actionId !== "string" || body.actionId.length < 8) {
+      return NextResponse.json({ error: "Missing agent action ID." }, { status: 400 });
+    }
+    actionId = body.actionId;
+
+    const existing = getCheckoutResult(actionId);
+    if (existing) {
+      writeAudit({ actionId, type: "money.idempotent_replay", summary: "Returned the existing checkout safely", level: "warning" });
+      return NextResponse.json(existing);
+    }
+
+    const { resolved, amountPaise } = validateMoneyAction(body.items as CartLine[], body.approved === true);
+    writeAudit({
+      actionId,
+      type: "money.gate_passed",
+      summary: `Buyer approved a bounded ${formatInr(amountPaise)} checkout`,
+      detail: { amountPaise, itemIds: resolved.map((item) => item.id), maxAllowedPaise: 1_000_000 },
+      level: "success",
+    });
+
+    if (body.simulateFailure === true) throw new Error("Simulated Razorpay MCP timeout");
+
+    const mockMode = process.env.PAYMENTS_MOCK_MODE !== "false";
+    const referenceId = `agent_${actionId.replace(/-/g, "").slice(0, 18)}`;
+    const result = mockMode
+      ? {
+          url: `/demo-payment?actionId=${encodeURIComponent(actionId)}&amount=${amountPaise}`,
+          paymentLinkId: `plink_demo_${actionId.slice(0, 8)}`,
+          provider: "mock" as const,
+        }
+      : await createPaymentLinkWithMcp({
+          actionId,
+          amountPaise,
+          referenceId,
+          description: resolved.map((item) => `${item.quantity}× ${item.name}`).join(", "),
+        });
+
+    const response = { ...result, amountPaise, referenceId };
+    setCheckoutResult(actionId, response);
+    writeAudit({
+      actionId,
+      type: "money.payment_link_created",
+      summary: `${result.provider === "mock" ? "Demo" : "Razorpay MCP"} payment link created`,
+      detail: { amountPaise, referenceId, paymentLinkId: result.paymentLinkId, provider: result.provider },
+      level: "success",
+    });
+    if (isTelegramConfigured()) after(async () => {
+      const notification = await sendTelegramMessage({
+        title: "Payment link created",
+        lines: [`Amount: ${formatInr(amountPaise)}`, `Reference: ${referenceId}`, `Provider: ${result.provider}`],
+        level: "info",
+      });
+      writeAudit({
+        actionId,
+        type: notification.sent ? "telegram.sent" : "telegram.skipped",
+        summary: notification.sent ? "Merchant notified on Telegram" : notification.reason,
+        level: notification.sent ? "success" : "info",
+      });
+    });
+    return NextResponse.json(response);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unknown checkout error";
+    const policyBlocked = error instanceof MoneyPolicyError;
+    writeAudit({
+      actionId,
+      type: policyBlocked ? "money.action_blocked" : "money.action_failed",
+      summary: policyBlocked ? "Policy blocked the money action before checkout" : "Checkout stopped safely; no payment link was issued",
+      detail: { reason, policyCode: policyBlocked ? error.code : undefined },
+      level: policyBlocked ? "warning" : "error",
+    });
+    if (isTelegramConfigured()) after(async () => {
+      const notification = await sendTelegramMessage({
+        title: "Checkout stopped safely",
+        lines: [`Action: ${actionId}`, `Reason: ${reason}`, "No payment link was issued."],
+        level: "error",
+      });
+      writeAudit({
+        actionId,
+        type: notification.sent ? "telegram.sent" : "telegram.skipped",
+        summary: notification.sent ? "Failure notification sent to Telegram" : notification.reason,
+        level: notification.sent ? "success" : "info",
+      });
+    });
+    return NextResponse.json(
+      {
+        error: policyBlocked
+          ? `Checkout blocked by policy: ${reason}`
+          : "Checkout is temporarily unavailable. Nothing was charged; you can retry safely.",
+        reason,
+      },
+      { status: policyBlocked ? 422 : 503 },
+    );
+  }
+}
