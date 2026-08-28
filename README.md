@@ -34,6 +34,24 @@ Open [http://localhost:3000](http://localhost:3000). The default behavior is moc
 
 The backend derives a temporary Basic merchant token and connects directly to `https://mcp.razorpay.com/mcp`. Credentials remain server-side. Never commit `.env.local`.
 
+## Use the project-local Razorpay CLI
+
+The official Windows CLI is installed in `.tools/razorpay` and reads the same test credentials from `.env.local`. It is separate from MCP: use the CLI for direct developer inspection and MCP for agent tool calls.
+
+```powershell
+npm.cmd run razorpay -- --version
+npm.cmd run razorpay -- orders list --count 5
+npm.cmd run razorpay -- payment-links list --count 5
+```
+
+The project wrapper blocks live keys. It also blocks possible write operations until you explicitly acknowledge them with `--allow-write`:
+
+```powershell
+npm.cmd run razorpay -- orders create --amount 50000 --currency INR --receipt buildathon-001 --allow-write
+```
+
+Razorpay expresses INR amounts in paise, so `50000` means Rs. 500. Keep CLI writes in Test Mode; the storefront's normal payment path remains approval-gated through MCP.
+
 ## Enable the webhook
 
 The endpoint is:

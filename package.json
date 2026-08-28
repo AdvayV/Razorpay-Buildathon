@@ -6,6 +6,7 @@
     "dev": "node scripts/next-with-system-ca.mjs dev",
     "build": "node scripts/next-with-system-ca.mjs build",
     "start": "node scripts/next-with-system-ca.mjs start",
+    "razorpay": "node scripts/razorpay-cli.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
