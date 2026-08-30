@@ -124,3 +124,53 @@ npm.cmd run build
 The project scripts launch Node with the Windows system certificate store. This is required on the current development network and keeps Razorpay MCP TLS verification enabled.
 
 Official references: [Razorpay MCP server](https://github.com/razorpay/razorpay-mcp-server), [Razorpay webhook validation](https://razorpay.com/docs/webhooks/validate-test/), and [webhook setup](https://razorpay.com/docs/webhooks/setup-edit-payments/).
+
+## How to view the website locally
+
+Follow these steps from the project folder:
+
+```powershell
+cd "C:\Advay study\VIT\Razorpay Buildathon"
+npm.cmd install
+npm.cmd run dev
+```
+
+Then open this URL in your browser:
+
+```text
+http://localhost:3000
+```
+
+What you should see:
+
+- The homepage with a shopping prompt box
+- Example queries like “focused morning routine under ₹2,500”
+- A recommendation panel showing suggested items and reasoning
+- An audit panel listing events and actions taken
+- A button to approve and create a payment link
+
+If you are testing the app with mock mode enabled, the app will work without real Razorpay credentials. The payment flow is still simulated locally, so no real money is moved.
+
+If you want to enable the real Razorpay test flow:
+
+1. Copy `.env.example` to `.env.local`
+2. Add your real Razorpay test keys
+3. Set `PAYMENTS_MOCK_MODE=false`
+4. Restart the app with:
+
+```powershell
+npm.cmd run dev
+```
+
+Once the server is running, any browser page that calls the app will use the local frontend at `http://localhost:3000` and the local backend API routes live under the same app.
+
+For a beginner, the easiest way to understand the app is to:
+
+1. Open the homepage in the browser
+2. Type a shopping request
+3. Observe the recommendation
+4. Click the approval button
+5. Watch the audit log update
+6. Repeat with a different prompt
+
+That flow shows how the app moves from buyer request to product recommendation to payment preparation to event tracking.
