@@ -2,6 +2,10 @@
 
 An explainable agentic storefront for the Razorpay Buildathon. A buyer describes what they need, the agent recommends a bounded cart, and only an explicit approval can create a Razorpay test-mode payment link.
 
+**Live demo:** [razorpay-buildathon-theta.vercel.app](https://razorpay-buildathon-theta.vercel.app)
+
+The public deployment runs in safe mock-payment mode, so judges can test recommendation, approval, checkout, audit and graceful failure flows without credentials or real money.
+
 ## What the MVP proves
 
 - Agent-readable catalog and natural-language product discovery
@@ -113,19 +117,9 @@ The current values are a deterministic **demo snapshot**, clearly labelled in th
 
 Google's official Trends API is currently limited to approved alpha testers. After access is granted, replace the demo provider in `lib/demand-trends.ts`; the recommendation, audit and checkout layers do not need to change. Apply through the [official Google Trends API page](https://developers.google.com/search/apis/trends).
 
-## Transparent recommendations and optional AI prose
+## Transparent local recommendations
 
-Every recommendation publishes its scoring formula, matched intent tags, relevance points, demand adjustment, total score, budget fit and rejection reason for every candidate. A counterfactual check shows whether removing demand data would change the primary choice. Before approval, the UI explicitly states that no Razorpay Order, payment link or charge exists.
-
-The scorecard is deterministic and remains the source of truth. An optional Hugging Face call can rewrite those verified facts into friendlier prose, but it cannot select products, alter prices or invoke Razorpay. The raw buyer message is not sent to Hugging Face.
-
-```env
-AI_EXPLANATIONS=true
-HF_TOKEN=hf_replace_me
-HF_EXPLANATION_MODEL=google/gemma-2-2b-it:cheapest
-```
-
-Keep `AI_EXPLANATIONS=false` for the fully local fallback. Hugging Face free accounts include only a small monthly inference credit, so this must not be required for checkout.
+Every recommendation publishes its scoring formula, matched intent tags, relevance points, demand adjustment, total score, budget fit and rejection reason for every candidate. A counterfactual check shows whether removing demand data would change the primary choice. Before approval, the UI explicitly states that no Razorpay Order, payment link or charge exists. All explanation text comes directly from the local deterministic scorecard; no third-party AI API is called.
 
 ## Two-minute judge demo
 

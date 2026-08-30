@@ -73,13 +73,6 @@ type Recommendation = {
     statement: string;
     afterApproval: string;
   };
-  narrative: {
-    text: string;
-    source: "deterministic" | "hugging-face" | "deterministic-fallback";
-    sourceLabel: string;
-    model?: string;
-    note: string;
-  };
 };
 
 type AuditEvent = {
@@ -253,9 +246,9 @@ export default function Home() {
               <div className="agent-said">
                 <span className="mini-mark">✦</span>
                 <div>
-                  <b>Buyer-facing explanation · {recommendation.narrative.sourceLabel}</b>
-                  <p>{recommendation.narrative.text}</p>
-                  <small>{recommendation.narrative.note}</small>
+                  <b>Buyer-facing explanation · local scoring engine</b>
+                  <p>{recommendation.explanation}</p>
+                  <small>Generated directly from the displayed scorecard; no external AI call was made.</small>
                 </div>
               </div>
 

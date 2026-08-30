@@ -1,0 +1,6 @@
+.env*
+!.env.example
+.tools/
+.next/
+node_modules/
+*.log

@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { makeRecommendation } from "@/lib/agent";
 import { formatInr } from "@/lib/catalog";
 import { writeAudit } from "@/lib/audit";
-import { buildOptionalNarrative } from "@/lib/ai-explainer";
 
 export async function POST(request: Request) {
   try {
@@ -14,21 +13,6 @@ export async function POST(request: Request) {
 
     const actionId = randomUUID();
     const recommendation = makeRecommendation(body.message.trim());
-    const narrative = await buildOptionalNarrative({
-      deterministicText: recommendation.explanation,
-      facts: {
-        inferredTags: recommendation.inferredTags,
-        buyerBudgetPaise: recommendation.budgetPaise,
-        totalPaise: recommendation.totalPaise,
-        selectedItems: recommendation.items.map((item) => ({
-          name: item.name,
-          pricePaise: item.pricePaise,
-          evidence: item.selectionEvidence,
-        })),
-        counterfactual: recommendation.decisionEvidence.counterfactual,
-        moneyActionState: recommendation.moneyAction,
-      },
-    });
     writeAudit({
       actionId,
       type: "agent.recommendation",
@@ -49,14 +33,13 @@ export async function POST(request: Request) {
         scoringFormula: recommendation.decisionEvidence.scoringFormula,
         candidateEvidence: recommendation.decisionEvidence.candidates,
         counterfactual: recommendation.decisionEvidence.counterfactual,
-        explanationSource: narrative.source,
-        explanationModel: narrative.model,
+        explanationSource: "local-scoring-engine",
         moneyActionState: recommendation.moneyAction.state,
       },
       level: "info",
     });
 
-    return NextResponse.json({ actionId, ...recommendation, narrative });
+    return NextResponse.json({ actionId, ...recommendation });
   } catch {
     return NextResponse.json({ error: "The agent could not form a recommendation." }, { status: 500 });
   }
