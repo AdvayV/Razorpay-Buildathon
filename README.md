@@ -5,6 +5,7 @@ An explainable agentic storefront for the Razorpay Buildathon. A buyer describes
 ## What the MVP proves
 
 - Agent-readable catalog and natural-language product discovery
+- Explainable demand-aware ranking with rising, stable and falling signals
 - Revenue growth through a budget-aware cross-sell
 - A human approval gate before every money action
 - Server-side catalog pricing, quantity rules and a ₹10,000 hard limit
@@ -104,9 +105,31 @@ Signed Razorpay webhook ───────────┘
 
 The MCP server performs the outbound Razorpay action. The webhook independently confirms what happened afterward; a browser redirect is not trusted as payment proof.
 
+## Demand radar and Google Trends
+
+The catalogue now covers daily-use beverages, skincare, kitchen utensils, haircare, sunscreen, vegetables, fruits, grocery staples and laundry care. Each product has a search query and an explainable demand direction that can influence ranking, but never its server-owned price.
+
+The current values are a deterministic **demo snapshot**, clearly labelled in the UI. They are not presented as live Google Trends data or as sales forecasts. Each product links to its matching Google Trends Explore query for manual validation.
+
+Google's official Trends API is currently limited to approved alpha testers. After access is granted, replace the demo provider in `lib/demand-trends.ts`; the recommendation, audit and checkout layers do not need to change. Apply through the [official Google Trends API page](https://developers.google.com/search/apis/trends).
+
+## Transparent recommendations and optional AI prose
+
+Every recommendation publishes its scoring formula, matched intent tags, relevance points, demand adjustment, total score, budget fit and rejection reason for every candidate. A counterfactual check shows whether removing demand data would change the primary choice. Before approval, the UI explicitly states that no Razorpay Order, payment link or charge exists.
+
+The scorecard is deterministic and remains the source of truth. An optional Hugging Face call can rewrite those verified facts into friendlier prose, but it cannot select products, alter prices or invoke Razorpay. The raw buyer message is not sent to Hugging Face.
+
+```env
+AI_EXPLANATIONS=true
+HF_TOKEN=hf_replace_me
+HF_EXPLANATION_MODEL=google/gemma-2-2b-it:cheapest
+```
+
+Keep `AI_EXPLANATIONS=false` for the fully local fallback. Hugging Face free accounts include only a small monthly inference credit, so this must not be required for checkout.
+
 ## Two-minute judge demo
 
-1. Enter: “I need a focused morning routine under ₹2,500.”
+1. Enter: “Build a skincare routine with face wash and sunscreen below ₹1,200.”
 2. Show the four-step **Understand → Rank → Grow → Gate** decision trace.
 3. Point out the cross-sell amount and percentage revenue uplift, then the three active safety boundaries.
 4. Click **Approve & create payment link** and complete the mock/test checkout.
@@ -144,7 +167,7 @@ http://localhost:3000
 What you should see:
 
 - The homepage with a shopping prompt box
-- Example queries like “focused morning routine under ₹2,500”
+- Example queries for coffee, skincare, groceries and kitchen essentials
 - A recommendation panel showing suggested items and reasoning
 - An audit panel listing events and actions taken
 - A button to approve and create a payment link

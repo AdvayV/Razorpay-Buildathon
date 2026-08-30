@@ -1,61 +1,181 @@
-import { catalog } from "@/lib/catalog";
+import { catalog, formatInr } from "@/lib/catalog";
+import { demandSignalMap, getDemandSignals, type DemandDirection } from "@/lib/demand-trends";
 
 function extractBudgetPaise(message: string) {
   const match = message.replace(/,/g, "").match(/(?:under|below|budget|upto|up to)\s*(?:rs\.?|₹)?\s*(\d+)/i);
   return match ? Number(match[1]) * 100 : 250000;
 }
 
+function demandBoost(direction: DemandDirection) {
+  if (direction === "rising") return 2;
+  if (direction === "falling") return -1;
+  return 0;
+}
+
 export function makeRecommendation(message: string) {
   const normalized = message.toLowerCase();
   const budgetPaise = Math.min(extractBudgetPaise(normalized), 1_000_000);
+  const signals = getDemandSignals();
+  const signalByItem = demandSignalMap();
   const intentTags = catalog
     .flatMap((item) => item.tags)
     .filter((tag, index, tags) => tags.indexOf(tag) === index && normalized.includes(tag));
-  const inferredTags = intentTags.length ? intentTags : ["focus", "morning"];
+  const inferredTags = intentTags.length ? intentTags : ["daily", "grocery"];
 
-  const ranked = catalog
-    .map((item) => ({
+  const scored = catalog.map((item) => {
+    const signal = signalByItem.get(item.id);
+    const matchedTags = item.tags.filter((tag) => inferredTags.includes(tag));
+    const relevancePoints = matchedTags.length * 4;
+    const demandPoints = demandBoost(signal?.direction ?? "stable");
+
+    return {
       item,
-      score: item.tags.reduce((score, tag) => score + (inferredTags.includes(tag) ? 2 : 0), 0),
-    }))
-    .filter(({ item }) => item.pricePaise <= budgetPaise && item.id !== "gift-wrap")
-    .sort((a, b) => b.score - a.score || a.item.pricePaise - b.item.pricePaise);
+      signal,
+      matchedTags,
+      relevancePoints,
+      demandPoints,
+      totalScore: relevancePoints + demandPoints,
+      fitsBuyerBudget: item.pricePaise <= budgetPaise,
+    };
+  });
 
-  const primary = ranked[0]?.item ?? catalog[0];
+  const eligible = scored
+    .filter((candidate) => candidate.fitsBuyerBudget)
+    .sort((a, b) => b.totalScore - a.totalScore || a.item.pricePaise - b.item.pricePaise);
+
+  const primaryResult = eligible[0];
+  if (!primaryResult) {
+    throw new Error("No catalog item fits the requested budget.");
+  }
+
+  const primary = primaryResult.item;
   const remaining = budgetPaise - primary.pricePaise;
-  const upsell = ranked.find(
-    ({ item }) => item.id !== primary.id && item.pricePaise <= remaining && item.tags.some((tag) => primary.tags.includes(tag)),
-  )?.item;
-  const selected = [primary, ...(upsell ? [upsell] : [])];
-  const totalPaise = selected.reduce((sum, item) => sum + item.pricePaise, 0);
+  const upsellResult = eligible.find(
+    ({ item }) =>
+      item.id !== primary.id &&
+      item.pricePaise <= remaining &&
+      item.tags.some((tag) => primary.tags.includes(tag)),
+  );
+  const upsell = upsellResult?.item;
+  const selected = [primaryResult, ...(upsellResult ? [upsellResult] : [])];
+  const totalPaise = selected.reduce((sum, result) => sum + result.item.pricePaise, 0);
   const incrementalRevenuePaise = upsell?.pricePaise ?? 0;
   const upliftPercent = Math.round((incrementalRevenuePaise / primary.pricePaise) * 100);
+  const topRising = [...signals].sort((a, b) => b.changePercent - a.changePercent)[0];
+  const topFalling = [...signals].sort((a, b) => a.changePercent - b.changePercent)[0];
+  const withoutDemandPrimary = [...eligible].sort(
+    (a, b) => b.relevancePoints - a.relevancePoints || a.item.pricePaise - b.item.pricePaise,
+  )[0];
+
+  const candidateEvidence = [...scored]
+    .sort((a, b) => b.totalScore - a.totalScore || a.item.pricePaise - b.item.pricePaise)
+    .map((candidate) => {
+      const isPrimary = candidate.item.id === primary.id;
+      const isAddOn = candidate.item.id === upsell?.id;
+      const sharedTags = candidate.item.tags.filter((tag) => primary.tags.includes(tag));
+      let outcome: "selected-primary" | "selected-add-on" | "not-selected" = "not-selected";
+      let reason: string;
+
+      if (isPrimary) {
+        outcome = "selected-primary";
+        reason = `Highest eligible score: ${candidate.relevancePoints} relevance + ${candidate.demandPoints} demand points.`;
+      } else if (isAddOn) {
+        outcome = "selected-add-on";
+        reason = `Compatible through ${sharedTags.slice(0, 3).join(", ")} and the ${formatInr(totalPaise)} cart stays within budget.`;
+      } else if (!candidate.fitsBuyerBudget) {
+        reason = `Rejected because ${formatInr(candidate.item.pricePaise)} exceeds the buyer's full budget.`;
+      } else if (candidate.item.pricePaise > remaining) {
+        reason = `Not added because only ${formatInr(remaining)} remained after the primary item.`;
+      } else if (sharedTags.length === 0) {
+        reason = "Not added because it has no catalogue tag in common with the primary item.";
+      } else {
+        reason = "Not added because a higher-ranked compatible alternative was selected.";
+      }
+
+      return {
+        itemId: candidate.item.id,
+        name: candidate.item.name,
+        pricePaise: candidate.item.pricePaise,
+        matchedTags: candidate.matchedTags,
+        relevancePoints: candidate.relevancePoints,
+        demandDirection: candidate.signal?.direction ?? "stable",
+        demandChangePercent: candidate.signal?.changePercent ?? 0,
+        demandPoints: candidate.demandPoints,
+        totalScore: candidate.totalScore,
+        fitsBuyerBudget: candidate.fitsBuyerBudget,
+        outcome,
+        reason,
+      };
+    });
 
   return {
     message,
     budgetPaise,
     inferredTags,
-    items: selected.map((item) => ({ ...item, quantity: 1 })),
+    items: selected.map(({ item, signal }) => ({
+      ...item,
+      quantity: 1,
+      demand: signal,
+      selectionEvidence: candidateEvidence.find((candidate) => candidate.itemId === item.id),
+    })),
     totalPaise,
     primaryRevenuePaise: primary.pricePaise,
     incrementalRevenuePaise,
     upliftPercent,
-    explanation: `${primary.name} best matches ${inferredTags.slice(0, 2).join(" + ")}. ${
+    decisionEvidence: {
+      scoringFormula: "total score = 4 points per matched intent tag + demand adjustment (+2 rising, 0 stable, -1 falling)",
+      inferredTags,
+      buyerBudgetPaise: budgetPaise,
+      remainingAfterPrimaryPaise: remaining,
+      demandChangedPrimaryChoice: withoutDemandPrimary.item.id !== primary.id,
+      counterfactual: withoutDemandPrimary.item.id === primary.id
+        ? "Removing the demand adjustment would not change the primary recommendation."
+        : `Without the demand adjustment, ${withoutDemandPrimary.item.name} would rank first.`,
+      candidates: candidateEvidence,
+    },
+    moneyAction: {
+      state: "awaiting-buyer-approval" as const,
+      proposedAction: "create_payment_link" as const,
+      statement: "No Razorpay order, payment link or charge has been created yet.",
+      afterApproval: "The server re-prices catalogue IDs, enforces policy limits, then asks Razorpay MCP to create one test-mode payment link.",
+    },
+    demandOverview: {
+      source: "demo-snapshot" as const,
+      sourceLabel: "Demo demand snapshot",
+      disclaimer: "Synthetic search-interest signals for the demo; they do not represent sales forecasts or live Google Trends data.",
+      topRising: {
+        name: catalog.find((item) => item.id === topRising.itemId)?.name ?? topRising.query,
+        changePercent: topRising.changePercent,
+      },
+      topFalling: {
+        name: catalog.find((item) => item.id === topFalling.itemId)?.name ?? topFalling.query,
+        changePercent: topFalling.changePercent,
+      },
+    },
+    explanation: `${primary.name} ranked first because it matched ${primaryResult.matchedTags.join(", ") || "the default daily-use intent"}. Its score was ${primaryResult.relevancePoints} relevance points plus ${primaryResult.demandPoints} demand points. ${
       upsell
-        ? `${upsell.name} is a compatible add-on and keeps the cart within budget.`
-        : "No add-on was included because the remaining budget was protected."
+        ? `${upsell.name} was added because it shares catalogue context with the primary item and keeps the total within the ${formatInr(budgetPaise)} budget.`
+        : "No add-on was included because the remaining budget or compatibility rule rejected the alternatives."
     }`,
     decisionTrace: [
-      { step: "Understand", detail: `Detected ${inferredTags.slice(0, 2).join(" + ")} with a ₹${budgetPaise / 100} ceiling.` },
-      { step: "Rank", detail: `${primary.name} scored highest against catalog tags.` },
+      { step: "Understand", detail: `Detected ${inferredTags.slice(0, 2).join(" + ")} with a ${formatInr(budgetPaise)} ceiling.` },
+      {
+        step: "Rank",
+        detail: `${primary.name}: ${primaryResult.relevancePoints} relevance + ${primaryResult.demandPoints} demand = ${primaryResult.totalScore} points.`,
+      },
       {
         step: "Grow",
         detail: upsell
-          ? `Added ${upsell.name} for ${upliftPercent}% potential basket uplift.`
+          ? `Added ${upsell.name} for ${upliftPercent}% potential basket uplift without crossing the budget.`
           : "Protected the buyer budget; no compatible add-on was safe.",
       },
-      { step: "Gate", detail: "Paused before money movement for explicit buyer approval." },
+      { step: "Gate", detail: "No money action has occurred; payment-link creation awaits explicit approval." },
     ],
-    boundaries: ["Server-priced catalog only", "Maximum ₹10,000", "Payment link requires explicit approval"],
+    boundaries: [
+      "Server-priced catalog only",
+      "Maximum Rs. 10,000",
+      "Demand signals never set prices",
+      "Payment link requires explicit approval",
+    ],
   };
 }

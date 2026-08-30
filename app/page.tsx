@@ -7,8 +7,36 @@ type Item = {
   name: string;
   description: string;
   pricePaise: number;
+  category: string;
+  packSize: string;
   quantity: number;
   accent: string;
+  demand: DemandSignal;
+  selectionEvidence?: CandidateEvidence;
+};
+
+type DemandSignal = {
+  direction: "rising" | "stable" | "falling";
+  changePercent: number;
+  interestScore: number;
+  sourceLabel: string;
+  asOf: string;
+  exploreUrl: string;
+};
+
+type CandidateEvidence = {
+  itemId: string;
+  name: string;
+  pricePaise: number;
+  matchedTags: string[];
+  relevancePoints: number;
+  demandDirection: "rising" | "stable" | "falling";
+  demandChangePercent: number;
+  demandPoints: number;
+  totalScore: number;
+  fitsBuyerBudget: boolean;
+  outcome: "selected-primary" | "selected-add-on" | "not-selected";
+  reason: string;
 };
 
 type Recommendation = {
@@ -23,6 +51,35 @@ type Recommendation = {
   explanation: string;
   decisionTrace: Array<{ step: string; detail: string }>;
   boundaries: string[];
+  demandOverview: {
+    source: "demo-snapshot";
+    sourceLabel: string;
+    disclaimer: string;
+    topRising: { name: string; changePercent: number };
+    topFalling: { name: string; changePercent: number };
+  };
+  decisionEvidence: {
+    scoringFormula: string;
+    inferredTags: string[];
+    buyerBudgetPaise: number;
+    remainingAfterPrimaryPaise: number;
+    demandChangedPrimaryChoice: boolean;
+    counterfactual: string;
+    candidates: CandidateEvidence[];
+  };
+  moneyAction: {
+    state: "awaiting-buyer-approval";
+    proposedAction: "create_payment_link";
+    statement: string;
+    afterApproval: string;
+  };
+  narrative: {
+    text: string;
+    source: "deterministic" | "hugging-face" | "deterministic-fallback";
+    sourceLabel: string;
+    model?: string;
+    note: string;
+  };
 };
 
 type AuditEvent = {
@@ -31,13 +88,20 @@ type AuditEvent = {
   type: string;
   summary: string;
   level: "info" | "success" | "warning" | "error";
+  detail?: Record<string, unknown>;
 };
 
 const samples = [
-  "I need a focused morning routine under ₹2,500",
-  "Find a calming tea gift below ₹1,800",
-  "Build me a useful tea set under ₹2,000",
+  "Coffee and breakfast essentials under Rs. 800",
+  "Build a skincare routine with face wash and sunscreen below Rs. 1,200",
+  "I need vegetables and kitchen staples under Rs. 1,500",
 ];
+
+function demandLabel(signal: DemandSignal) {
+  const arrow = signal.direction === "rising" ? "↑" : signal.direction === "falling" ? "↓" : "→";
+  const change = `${signal.changePercent > 0 ? "+" : ""}${signal.changePercent}%`;
+  return `${arrow} ${change} ${signal.direction}`;
+}
 
 function money(paise: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -174,10 +238,87 @@ export default function Home() {
             </div>
           ) : (
             <div className="recommendation">
+              <section className="demand-radar" aria-label="Demand trend summary">
+                <div>
+                  <span>DEMAND RADAR / INDIA</span>
+                  <strong>{recommendation.demandOverview.sourceLabel}</strong>
+                </div>
+                <div className="demand-movers">
+                  <p><b>RISING</b>{recommendation.demandOverview.topRising.name} <em>+{recommendation.demandOverview.topRising.changePercent}%</em></p>
+                  <p><b>FALLING</b>{recommendation.demandOverview.topFalling.name} <em>{recommendation.demandOverview.topFalling.changePercent}%</em></p>
+                </div>
+                <small>{recommendation.demandOverview.disclaimer}</small>
+              </section>
+
               <div className="agent-said">
                 <span className="mini-mark">✦</span>
-                <div><b>Agent’s reasoning</b><p>{recommendation.explanation}</p></div>
+                <div>
+                  <b>Buyer-facing explanation · {recommendation.narrative.sourceLabel}</b>
+                  <p>{recommendation.narrative.text}</p>
+                  <small>{recommendation.narrative.note}</small>
+                </div>
               </div>
+
+              <section className="reasoning-ledger" aria-label="Recommendation evidence">
+                <div className="ledger-heading">
+                  <div><span>EVIDENCE LEDGER</span><h3>Why these products?</h3></div>
+                  <code>{recommendation.moneyAction.state.replaceAll("-", " ")}</code>
+                </div>
+
+                <div className="formula-card">
+                  <strong>Published scoring formula</strong>
+                  <p>{recommendation.decisionEvidence.scoringFormula}</p>
+                  <small>Detected intent: {recommendation.decisionEvidence.inferredTags.join(" · ")}</small>
+                </div>
+
+                <div className="selected-evidence">
+                  {recommendation.items.map((item) => (
+                    <article key={item.id}>
+                      <span>{item.selectionEvidence?.outcome === "selected-primary" ? "PRIMARY" : "ADD-ON"}</span>
+                      <strong>{item.name}</strong>
+                      <div>
+                        <code>{item.selectionEvidence?.relevancePoints ?? 0} relevance</code>
+                        <b>+</b>
+                        <code>{item.selectionEvidence?.demandPoints ?? 0} demand</code>
+                        <b>=</b>
+                        <code>{item.selectionEvidence?.totalScore ?? 0} total</code>
+                      </div>
+                      <p>{item.selectionEvidence?.reason}</p>
+                    </article>
+                  ))}
+                </div>
+
+                <div className="counterfactual">
+                  <strong>Counterfactual check</strong>
+                  <p>{recommendation.decisionEvidence.counterfactual}</p>
+                </div>
+
+                <details className="candidate-details">
+                  <summary>Inspect every candidate and rejection reason</summary>
+                  <div className="candidate-table-wrap">
+                    <table>
+                      <thead><tr><th>Candidate</th><th>Intent</th><th>Demand</th><th>Total</th><th>Outcome</th></tr></thead>
+                      <tbody>
+                        {recommendation.decisionEvidence.candidates.map((candidate) => (
+                          <tr key={candidate.itemId}>
+                            <td><strong>{candidate.name}</strong><small>{candidate.reason}</small></td>
+                            <td>{candidate.relevancePoints}<small>{candidate.matchedTags.join(", ") || "no direct tag"}</small></td>
+                            <td>{candidate.demandPoints > 0 ? "+" : ""}{candidate.demandPoints}<small>{candidate.demandDirection} {candidate.demandChangePercent > 0 ? "+" : ""}{candidate.demandChangePercent}%</small></td>
+                            <td>{candidate.totalScore}</td>
+                            <td><span className={`outcome ${candidate.outcome}`}>{candidate.outcome.replaceAll("-", " ")}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+
+                <div className="money-state">
+                  <strong>Money-action status</strong>
+                  <p>{recommendation.moneyAction.statement}</p>
+                  <small>{recommendation.moneyAction.afterApproval}</small>
+                </div>
+              </section>
 
               <div className="agent-plan" aria-label="Agent decision trace">
                 {recommendation.decisionTrace.map((decision, index) => (
@@ -192,12 +333,19 @@ export default function Home() {
               <div className="product-grid">
                 {recommendation.items.map((item, index) => (
                   <article className={`product-card ${item.accent}`} key={item.id}>
-                    <div className="product-number">0{index + 1}</div>
+                    <div className="product-topline">
+                      <span className="product-number">0{index + 1}</span>
+                      <span className={`trend-badge ${item.demand.direction}`}>{demandLabel(item.demand)}</span>
+                    </div>
                     <div className="product-art"><span>{item.name.split(" ")[0]}</span></div>
                     <div className="product-copy">
+                      <small>{item.category} · {item.packSize}</small>
                       <h3>{item.name}</h3>
                       <p>{item.description}</p>
-                      <strong>{money(item.pricePaise)}</strong>
+                      <div className="product-price-row">
+                        <strong>{money(item.pricePaise)}</strong>
+                        <a href={item.demand.exploreUrl} target="_blank" rel="noreferrer">Explore trend ↗</a>
+                      </div>
                     </div>
                   </article>
                 ))}
@@ -245,6 +393,12 @@ export default function Home() {
                   <time>{new Date(event.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
                   <strong>{event.summary}</strong>
                   <code>{event.type}</code>
+                  {event.detail && (
+                    <details className="event-detail">
+                      <summary>Inspect evidence</summary>
+                      <pre>{JSON.stringify(event.detail, null, 2)}</pre>
+                    </details>
+                  )}
                 </div>
               </div>
             ))}

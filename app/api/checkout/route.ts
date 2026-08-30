@@ -32,7 +32,21 @@ export async function POST(request: Request) {
       actionId,
       type: "money.gate_passed",
       summary: `Buyer approved a bounded ${formatInr(amountPaise)} checkout`,
-      detail: { amountPaise, itemIds: resolved.map((item) => item.id), maxAllowedPaise: 1_000_000 },
+      detail: {
+        proposedAction: "create_payment_link",
+        approvalReceived: true,
+        pricingSource: "server-catalog",
+        lines: resolved.map((item) => ({
+          itemId: item.id,
+          name: item.name,
+          quantity: item.quantity,
+          unitPricePaise: item.pricePaise,
+          lineTotalPaise: item.pricePaise * item.quantity,
+        })),
+        amountPaise,
+        maxAllowedPaise: 1_000_000,
+        checksPassed: ["explicit approval", "known catalog IDs", "quantity 1-3", "unique lines", "total at or below Rs. 10,000"],
+      },
       level: "success",
     });
 
@@ -59,7 +73,15 @@ export async function POST(request: Request) {
       actionId,
       type: "money.payment_link_created",
       summary: `${result.provider === "mock" ? "Demo" : "Razorpay MCP"} payment link created`,
-      detail: { amountPaise, referenceId, paymentLinkId: result.paymentLinkId, provider: result.provider },
+      detail: {
+        actionPerformed: "create_payment_link",
+        razorpayOrderCreated: false,
+        amountPaise,
+        referenceId,
+        paymentLinkId: result.paymentLinkId,
+        provider: result.provider,
+        reason: "Created only after explicit buyer approval and all server-side policy checks passed.",
+      },
       level: "success",
     });
     if (isTelegramConfigured()) after(async () => {
