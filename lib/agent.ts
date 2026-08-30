@@ -1,5 +1,6 @@
 import { catalog, formatInr } from "@/lib/catalog";
 import { demandSignalMap, getDemandSignals, type DemandDirection } from "@/lib/demand-trends";
+import { compareMarketOffers } from "@/lib/market-comparison";
 
 function extractBudgetPaise(message: string) {
   const match = message.replace(/,/g, "").match(/(?:under|below|budget|upto|up to)\s*(?:rs\.?|₹)?\s*(\d+)/i);
@@ -14,7 +15,9 @@ function demandBoost(direction: DemandDirection) {
 
 export function makeRecommendation(message: string) {
   const normalized = message.toLowerCase();
-  const budgetPaise = Math.min(extractBudgetPaise(normalized), 1_000_000);
+  const requestedBudgetPaise = extractBudgetPaise(normalized);
+  const budgetPaise = Math.min(requestedBudgetPaise, 1_000_000);
+  const budgetWasCapped = requestedBudgetPaise > budgetPaise;
   const signals = getDemandSignals();
   const signalByItem = demandSignalMap();
   const intentTags = catalog
@@ -105,19 +108,33 @@ export function makeRecommendation(message: string) {
         fitsBuyerBudget: candidate.fitsBuyerBudget,
         outcome,
         reason,
+        scoreGapToWinner: primaryResult.totalScore - candidate.totalScore,
+        rejectionCategory: isPrimary || isAddOn
+          ? null
+          : !candidate.fitsBuyerBudget
+            ? "over-full-budget"
+            : candidate.item.pricePaise > remaining
+              ? "over-remaining-budget"
+              : sharedTags.length === 0
+                ? "incompatible-tags"
+                : "lower-ranked",
       };
     });
+
+  const selectedItems = selected.map(({ item, signal }) => ({
+    ...item,
+    quantity: 1,
+    demand: signal,
+    selectionEvidence: candidateEvidence.find((candidate) => candidate.itemId === item.id),
+    marketComparison: compareMarketOffers(item.id),
+  }));
+  const rejectedCandidates = candidateEvidence.filter((candidate) => candidate.outcome === "not-selected");
 
   return {
     message,
     budgetPaise,
     inferredTags,
-    items: selected.map(({ item, signal }) => ({
-      ...item,
-      quantity: 1,
-      demand: signal,
-      selectionEvidence: candidateEvidence.find((candidate) => candidate.itemId === item.id),
-    })),
+    items: selectedItems,
     totalPaise,
     primaryRevenuePaise: primary.pricePaise,
     incrementalRevenuePaise,
@@ -132,6 +149,21 @@ export function makeRecommendation(message: string) {
         ? "Removing the demand adjustment would not change the primary recommendation."
         : `Without the demand adjustment, ${withoutDemandPrimary.item.name} would rank first.`,
       candidates: candidateEvidence,
+      summary: {
+        candidatesEvaluated: candidateEvidence.length,
+        selectedCount: selected.length,
+        rejectedCount: rejectedCandidates.length,
+        overBudgetCount: rejectedCandidates.filter((candidate) =>
+          candidate.rejectionCategory === "over-full-budget" || candidate.rejectionCategory === "over-remaining-budget"
+        ).length,
+        incompatibleCount: rejectedCandidates.filter((candidate) => candidate.rejectionCategory === "incompatible-tags").length,
+        matchedTagCount: new Set(candidateEvidence.flatMap((candidate) => candidate.matchedTags)).size,
+        budgetUtilizationPercent: Math.round((totalPaise / budgetPaise) * 100),
+        requestedBudgetPaise,
+        budgetWasCapped,
+        budgetCapPaise: 1_000_000,
+        scoreLeaderMargin: Math.max(0, primaryResult.totalScore - (eligible[1]?.totalScore ?? 0)),
+      },
     },
     moneyAction: {
       state: "awaiting-buyer-approval" as const,

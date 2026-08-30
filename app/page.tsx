@@ -13,6 +13,38 @@ type Item = {
   accent: string;
   demand: DemandSignal;
   selectionEvidence?: CandidateEvidence;
+  marketComparison: MarketComparison | null;
+};
+
+type MarketOffer = {
+  id: string;
+  channel: "local-merchant" | "amazon" | "flipkart" | "direct-brand";
+  seller: string;
+  itemPricePaise: number;
+  shippingPaise: number;
+  landedPricePaise: number;
+  estimatedDeliveryDays: number;
+  trustScore: number;
+  availability: "in-stock" | "limited";
+  checkoutEligible: boolean;
+  verificationUrl?: string;
+};
+
+type MarketComparison = {
+  itemId: string;
+  productName: string;
+  asOf: string;
+  sourceLabel: string;
+  disclaimer: string;
+  methodology: string;
+  offers: MarketOffer[];
+  cheapestOfferId: string;
+  fastestOfferId: string;
+  mostTrustedOfferId: string;
+  localMerchantOfferId: string;
+  localDifferencePaise: number;
+  localDeliveryAdvantageDays: number;
+  insight: string;
 };
 
 type DemandSignal = {
@@ -37,6 +69,8 @@ type CandidateEvidence = {
   fitsBuyerBudget: boolean;
   outcome: "selected-primary" | "selected-add-on" | "not-selected";
   reason: string;
+  scoreGapToWinner: number;
+  rejectionCategory: "over-full-budget" | "over-remaining-budget" | "incompatible-tags" | "lower-ranked" | null;
 };
 
 type Recommendation = {
@@ -66,6 +100,19 @@ type Recommendation = {
     demandChangedPrimaryChoice: boolean;
     counterfactual: string;
     candidates: CandidateEvidence[];
+    summary: {
+      candidatesEvaluated: number;
+      selectedCount: number;
+      rejectedCount: number;
+      overBudgetCount: number;
+      incompatibleCount: number;
+      matchedTagCount: number;
+      budgetUtilizationPercent: number;
+      requestedBudgetPaise: number;
+      budgetWasCapped: boolean;
+      budgetCapPaise: number;
+      scoreLeaderMargin: number;
+    };
   };
   moneyAction: {
     state: "awaiting-buyer-approval";
@@ -83,6 +130,8 @@ type AuditEvent = {
   level: "info" | "success" | "warning" | "error";
   detail?: Record<string, unknown>;
 };
+
+type AuditFilter = "all" | "recommendation" | "money" | "market" | "webhook" | "system";
 
 const samples = [
   "Coffee and breakfast essentials under Rs. 800",
@@ -104,12 +153,31 @@ function money(paise: number) {
   }).format(paise / 100);
 }
 
+function auditCategory(type: string): Exclude<AuditFilter, "all"> {
+  if (type.startsWith("webhook.")) return "webhook";
+  if (type.startsWith("market.")) return "market";
+  if (type.startsWith("money.")) return "money";
+  if (type.startsWith("agent.")) return "recommendation";
+  return "system";
+}
+
 export default function Home() {
   const [message, setMessage] = useState(samples[0]);
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
+  const [auditFilter, setAuditFilter] = useState<AuditFilter>("all");
+
+  const visibleAudit = audit.filter((event) => auditFilter === "all" || auditCategory(event.type) === auditFilter);
+  const auditStats = {
+    decisions: audit.filter((event) => event.type === "agent.recommendation").length,
+    moneyActions: audit.filter((event) => event.type.startsWith("money.")).length,
+    marketComparisons: audit.filter((event) => event.type === "market.comparison_viewed").length,
+    webhookAccepted: audit.filter((event) => event.type.startsWith("webhook.") && !event.type.includes("rejected") && !event.type.includes("duplicate")).length,
+    webhookRejected: audit.filter((event) => event.type === "webhook.rejected").length,
+    stoppedSafely: audit.filter((event) => event.type.includes("blocked") || event.type.includes("failed") || event.type.includes("rejected")).length,
+  };
 
   const refreshAudit = useCallback(async () => {
     const response = await fetch("/api/audit", { cache: "no-store" });
@@ -264,6 +332,31 @@ export default function Home() {
                   <small>Detected intent: {recommendation.decisionEvidence.inferredTags.join(" · ")}</small>
                 </div>
 
+                <div className="decision-kpis" aria-label="Decision summary">
+                  <div><strong>{recommendation.decisionEvidence.summary.candidatesEvaluated}</strong><span>evaluated</span></div>
+                  <div><strong>{recommendation.decisionEvidence.summary.selectedCount}</strong><span>selected</span></div>
+                  <div><strong>{recommendation.decisionEvidence.summary.rejectedCount}</strong><span>rejected</span></div>
+                  <div><strong>{recommendation.decisionEvidence.summary.matchedTagCount}</strong><span>tags matched</span></div>
+                  <div><strong>{recommendation.decisionEvidence.summary.scoreLeaderMargin}</strong><span>leader margin</span></div>
+                  <div><strong>{recommendation.decisionEvidence.summary.budgetUtilizationPercent}%</strong><span>budget used</span></div>
+                </div>
+
+                <div className="decision-controls">
+                  <article>
+                    <span>BUDGET CONTROL</span>
+                    <strong>{money(recommendation.totalPaise)} / {money(recommendation.budgetPaise)}</strong>
+                    <p>{money(recommendation.budgetPaise - recommendation.totalPaise)} remains after the proposed cart.</p>
+                    {recommendation.decisionEvidence.summary.budgetWasCapped && (
+                      <mark>Requested {money(recommendation.decisionEvidence.summary.requestedBudgetPaise)}; capped at {money(recommendation.decisionEvidence.summary.budgetCapPaise)} by policy.</mark>
+                    )}
+                  </article>
+                  <article>
+                    <span>REJECTION CONTROL</span>
+                    <strong>{recommendation.decisionEvidence.summary.overBudgetCount} budget · {recommendation.decisionEvidence.summary.incompatibleCount} compatibility</strong>
+                    <p>Every losing product keeps its score gap, matched tags and exact rejection reason below.</p>
+                  </article>
+                </div>
+
                 <div className="selected-evidence">
                   {recommendation.items.map((item) => (
                     <article key={item.id}>
@@ -297,8 +390,8 @@ export default function Home() {
                             <td><strong>{candidate.name}</strong><small>{candidate.reason}</small></td>
                             <td>{candidate.relevancePoints}<small>{candidate.matchedTags.join(", ") || "no direct tag"}</small></td>
                             <td>{candidate.demandPoints > 0 ? "+" : ""}{candidate.demandPoints}<small>{candidate.demandDirection} {candidate.demandChangePercent > 0 ? "+" : ""}{candidate.demandChangePercent}%</small></td>
-                            <td>{candidate.totalScore}</td>
-                            <td><span className={`outcome ${candidate.outcome}`}>{candidate.outcome.replaceAll("-", " ")}</span></td>
+                            <td>{candidate.totalScore}<small>{candidate.scoreGapToWinner > 0 ? `${candidate.scoreGapToWinner} behind leader` : "leader"}</small></td>
+                            <td><span className={`outcome ${candidate.outcome}`}>{candidate.outcome.replaceAll("-", " ")}</span><small>{candidate.rejectionCategory?.replaceAll("-", " ")}</small></td>
                           </tr>
                         ))}
                       </tbody>
@@ -344,6 +437,60 @@ export default function Home() {
                 ))}
               </div>
 
+              <section className="market-board" aria-label="Market comparison">
+                <div className="market-heading">
+                  <div><span>MARKET COMPARISON / LANDED COST</span><h3>Would this buyer get a better deal elsewhere?</h3></div>
+                  <code>price + shipping</code>
+                </div>
+                {recommendation.items.map((item) => {
+                  const comparison = item.marketComparison;
+                  if (!comparison) return null;
+                  return (
+                    <details className="market-product" key={item.id} open>
+                      <summary>
+                        <span>{item.name}</span>
+                        <small>Snapshot {comparison.asOf}</small>
+                      </summary>
+                      <div className="market-insight">
+                        <strong>Agent verdict</strong>
+                        <p>{comparison.insight}</p>
+                      </div>
+                      <div className="market-table-wrap">
+                        <table>
+                          <thead><tr><th>Seller</th><th>Item</th><th>Shipping</th><th>Landed</th><th>Delivery</th><th>Trust</th></tr></thead>
+                          <tbody>
+                            {comparison.offers.map((offer) => (
+                              <tr className={offer.checkoutEligible ? "local-offer" : undefined} key={offer.id}>
+                                <td>
+                                  <strong>{offer.seller}</strong>
+                                  <div className="offer-badges">
+                                    {offer.id === comparison.cheapestOfferId && <span>LOWEST COST</span>}
+                                    {offer.id === comparison.fastestOfferId && <span>FASTEST</span>}
+                                    {offer.id === comparison.mostTrustedOfferId && <span>HIGHEST TRUST</span>}
+                                    {offer.checkoutEligible && <span>CHECKOUT READY</span>}
+                                  </div>
+                                  {offer.verificationUrl && <a href={offer.verificationUrl} target="_blank" rel="noreferrer">Review search ↗</a>}
+                                </td>
+                                <td>{money(offer.itemPricePaise)}</td>
+                                <td>{offer.shippingPaise === 0 ? "Free" : money(offer.shippingPaise)}</td>
+                                <td><strong>{money(offer.landedPricePaise)}</strong></td>
+                                <td>{offer.estimatedDeliveryDays === 1 ? "1 day" : `${offer.estimatedDeliveryDays} days`}</td>
+                                <td>{offer.trustScore.toFixed(1)} / 5</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="market-footnote">
+                        <p>{comparison.methodology}</p>
+                        <small>{comparison.disclaimer}</small>
+                        <a href={`/api/market/compare?itemId=${encodeURIComponent(item.id)}`} target="_blank" rel="noreferrer">Open agent-readable comparison JSON ↗</a>
+                      </div>
+                    </details>
+                  );
+                })}
+              </section>
+
               <div className="approval-box">
                 <div>
                   <span>TOTAL / {recommendation.items.length} ITEMS</span>
@@ -376,16 +523,38 @@ export default function Home() {
             <div><strong>Policy guard is active</strong><p>Only catalog items · max ₹10,000 · explicit approval</p></div>
           </div>
 
+          <div className="audit-kpis" aria-label="Audit summary">
+            <div><strong>{auditStats.decisions}</strong><span>decisions</span></div>
+            <div><strong>{auditStats.moneyActions}</strong><span>money events</span></div>
+            <div><strong>{auditStats.marketComparisons}</strong><span>market checks</span></div>
+            <div><strong>{auditStats.webhookAccepted}</strong><span>webhooks accepted</span></div>
+            <div><strong>{auditStats.webhookRejected}</strong><span>webhooks rejected</span></div>
+            <div><strong>{auditStats.stoppedSafely}</strong><span>stopped safely</span></div>
+          </div>
+
+          <div className="audit-filters" aria-label="Filter audit events">
+            {(["all", "recommendation", "money", "market", "webhook", "system"] as AuditFilter[]).map((filter) => (
+              <button
+                key={filter}
+                className={auditFilter === filter ? "active" : undefined}
+                onClick={() => setAuditFilter(filter)}
+                aria-pressed={auditFilter === filter}
+              >
+                {filter}
+              </button>
+            ))}
+          </div>
+
           <div className="timeline">
-            {audit.length === 0 ? (
-              <p className="audit-empty">Ask the agent to begin the audit trail.</p>
-            ) : audit.slice(0, 10).map((event) => (
+            {visibleAudit.length === 0 ? (
+              <p className="audit-empty">No {auditFilter === "all" ? "" : `${auditFilter} `}events yet.</p>
+            ) : visibleAudit.slice(0, 14).map((event) => (
               <div className="event" key={event.id}>
                 <span className={`event-dot ${event.level}`} />
                 <div>
                   <time>{new Date(event.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
                   <strong>{event.summary}</strong>
-                  <code>{event.type}</code>
+                  <code>{auditCategory(event.type)} / {event.type}</code>
                   {event.detail && (
                     <details className="event-detail">
                       <summary>Inspect evidence</summary>

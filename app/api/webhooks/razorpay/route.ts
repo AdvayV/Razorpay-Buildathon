@@ -23,6 +23,7 @@ export async function POST(request: Request) {
       actionId: "webhook",
       type: "webhook.rejected",
       summary: "Rejected a webhook with an invalid signature",
+      detail: { reason: "signature-mismatch", signaturePresent: signature.length > 0 },
       level: "error",
     });
     return NextResponse.json({ error: "Invalid webhook signature." }, { status: 401 });
@@ -30,6 +31,13 @@ export async function POST(request: Request) {
 
   const eventId = request.headers.get("x-razorpay-event-id") ?? expected;
   if (hasProcessedWebhook(eventId)) {
+    writeAudit({
+      actionId: eventId,
+      type: "webhook.duplicate_ignored",
+      summary: "Ignored a duplicate Razorpay webhook safely",
+      detail: { eventId, reason: "event-id-already-processed" },
+      level: "warning",
+    });
     return NextResponse.json({ ok: true, duplicate: true });
   }
 
@@ -37,6 +45,13 @@ export async function POST(request: Request) {
   try {
     payload = JSON.parse(rawBody) as typeof payload;
   } catch {
+    writeAudit({
+      actionId: eventId,
+      type: "webhook.rejected",
+      summary: "Rejected a signed webhook with malformed JSON",
+      detail: { eventId, reason: "malformed-json" },
+      level: "error",
+    });
     return NextResponse.json({ error: "Malformed JSON." }, { status: 400 });
   }
 

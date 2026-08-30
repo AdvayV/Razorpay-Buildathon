@@ -10,12 +10,14 @@ The public deployment runs in safe mock-payment mode, so judges can test recomme
 
 - Agent-readable catalog and natural-language product discovery
 - Explainable demand-aware ranking with rising, stable and falling signals
+- Agent-readable Amazon, Flipkart, direct-brand and local landed-cost comparison
 - Revenue growth through a budget-aware cross-sell
 - A human approval gate before every money action
 - Server-side catalog pricing, quantity rules and a ₹10,000 hard limit
 - Razorpay's hosted MCP server using `create_payment_link`
 - HMAC-SHA256 webhook verification and duplicate-event protection
 - A visible audit trail explaining recommendations, gates and outcomes
+- A decision dashboard for scores, tag matches, rejection classes, budgets and webhook outcomes
 - A graceful MCP failure demo where no payment link is issued
 
 ## Run it now
@@ -120,6 +122,12 @@ Google's official Trends API is currently limited to approved alpha testers. Aft
 ## Transparent local recommendations
 
 Every recommendation publishes its scoring formula, matched intent tags, relevance points, demand adjustment, total score, budget fit and rejection reason for every candidate. A counterfactual check shows whether removing demand data would change the primary choice. Before approval, the UI explicitly states that no Razorpay Order, payment link or charge exists. All explanation text comes directly from the local deterministic scorecard; no third-party AI API is called.
+
+## Market comparison and decision dashboard
+
+Each selected product includes normalized local merchant, Amazon, Flipkart and direct-brand offers. The agent reports item price, shipping, landed cost, delivery estimate and trust separately, then identifies the winner for each dimension without hiding them inside one blended score. External prices are explicitly labelled as illustrative deterministic demo values until an official marketplace or affiliate feed is connected. External offers never enter Razorpay checkout; the local server catalogue remains the only pricing authority.
+
+The comparison is also available as agent-readable JSON at `/api/market/compare?itemId=CATALOG_ITEM_ID`. The decision dashboard summarizes candidates evaluated, selected and rejected products, tag coverage, score margin, budget utilization and categorized audit events. Invalid, duplicate and malformed webhook deliveries are recorded with safe reason codes and no signature disclosure.
 
 ## Two-minute judge demo
 
