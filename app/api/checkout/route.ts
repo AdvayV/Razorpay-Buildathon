@@ -1,7 +1,7 @@
 import { after, NextResponse } from "next/server";
 import { writeAudit, getCheckoutResult, setCheckoutResult } from "@/lib/audit";
 import { formatInr } from "@/lib/catalog";
-import { MoneyPolicyError, validateMoneyAction, type CartLine, type VoucherInput } from "@/lib/policy";
+import { MoneyPolicyError, validateMoneyAction, type CartLine, type VoucherInput, type PlanType } from "@/lib/policy";
 import { createPaymentLinkWithMcp } from "@/lib/razorpay-mcp";
 import { isTelegramConfigured, sendTelegramMessage } from "@/lib/telegram";
 
@@ -11,6 +11,8 @@ type CheckoutBody = {
   items?: unknown;
   simulateFailure?: unknown;
   voucher?: unknown;
+  planType?: unknown;
+  recurringCadenceDays?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -29,18 +31,27 @@ export async function POST(request: Request) {
     }
 
     const voucher = body.voucher as VoucherInput | undefined;
-    const { resolved, amountPaise, originalAmountPaise, discountPaise, voucherCode } = validateMoneyAction(
+    const planType: PlanType = body.planType === "autopay-replenishment" ? "autopay-replenishment" : "one-time";
+    const cadenceDays = typeof body.recurringCadenceDays === "number" ? body.recurringCadenceDays : undefined;
+
+    const { resolved, amountPaise, originalAmountPaise, discountPaise, voucherCode, recurringCadenceDays } = validateMoneyAction(
       body.items as CartLine[],
       body.approved === true,
       voucher,
+      planType,
+      cadenceDays,
     );
+
+    const isAutopay = planType === "autopay-replenishment";
 
     writeAudit({
       actionId,
       type: "money.gate_passed",
-      summary: `Buyer approved a bounded ${formatInr(amountPaise)} checkout${discountPaise > 0 ? ` (${formatInr(discountPaise)} negotiated discount applied)` : ""}`,
+      summary: `Buyer approved a bounded ${formatInr(amountPaise)} checkout${isAutopay ? ` (UPI Autopay every ${recurringCadenceDays} days)` : ""}${discountPaise > 0 ? ` (${formatInr(discountPaise)} total discount applied)` : ""}`,
       detail: {
-        proposedAction: "create_payment_link",
+        proposedAction: isAutopay ? "create_autopay_subscription" : "create_payment_link",
+        planType,
+        recurringCadenceDays,
         approvalReceived: true,
         pricingSource: "server-catalog",
         lines: resolved.map((item) => ({
@@ -61,6 +72,7 @@ export async function POST(request: Request) {
           "quantity 1-3",
           "unique lines",
           "total at or below Rs. 10,000",
+          isAutopay ? `UPI Autopay mandate schedule: every ${recurringCadenceDays} days` : "standard single transaction",
           voucherCode ? `voucher ${voucherCode} verified within 35% margin limit` : "standard pricing",
         ],
       },
@@ -81,17 +93,27 @@ export async function POST(request: Request) {
           actionId,
           amountPaise,
           referenceId,
-          description: resolved.map((item) => `${item.quantity}× ${item.name}`).join(", "),
+          description: `${isAutopay ? `[Autopay: ${recurringCadenceDays}d] ` : ""}${resolved.map((item) => `${item.quantity}× ${item.name}`).join(", ")}`,
         });
 
-    const response = { ...result, amountPaise, originalAmountPaise, discountPaise, referenceId };
+    const response = {
+      ...result,
+      amountPaise,
+      originalAmountPaise,
+      discountPaise,
+      referenceId,
+      planType,
+      recurringCadenceDays,
+    };
     setCheckoutResult(actionId, response);
     writeAudit({
       actionId,
-      type: "money.payment_link_created",
-      summary: `${result.provider === "mock" ? "Demo" : "Razorpay MCP"} payment link created`,
+      type: isAutopay ? "money.autopay_mandate_created" : "money.payment_link_created",
+      summary: `${result.provider === "mock" ? "Demo" : "Razorpay MCP"} ${isAutopay ? "Autopay Mandate" : "payment link"} created`,
       detail: {
-        actionPerformed: "create_payment_link",
+        actionPerformed: isAutopay ? "create_autopay_mandate" : "create_payment_link",
+        planType,
+        recurringCadenceDays,
         razorpayOrderCreated: false,
         amountPaise,
         originalAmountPaise,
@@ -100,16 +122,19 @@ export async function POST(request: Request) {
         referenceId,
         paymentLinkId: result.paymentLinkId,
         provider: result.provider,
-        reason: "Created only after explicit buyer approval and all server-side policy checks passed.",
+        reason: isAutopay
+          ? `Autonomous recurring restock scheduled every ${recurringCadenceDays} days with 5% subscriber discount.`
+          : "Created only after explicit buyer approval and all server-side policy checks passed.",
       },
       level: "success",
     });
     if (isTelegramConfigured()) after(async () => {
       const notification = await sendTelegramMessage({
-        title: "Payment link created",
+        title: isAutopay ? "UPI Autopay Mandate created" : "Payment link created",
         lines: [
           `Amount: ${formatInr(amountPaise)}`,
-          discountPaise > 0 ? `Discount: ${formatInr(discountPaise)} (${voucherCode})` : "",
+          isAutopay ? `Schedule: Recurring every ${recurringCadenceDays} days` : "",
+          discountPaise > 0 ? `Discount: ${formatInr(discountPaise)} (${voucherCode || "Autopay 5%"})` : "",
           `Reference: ${referenceId}`,
           `Provider: ${result.provider}`,
         ].filter(Boolean),

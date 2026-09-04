@@ -10,6 +10,8 @@ export type VoucherInput = {
   discountPaise: number;
 };
 
+export type PlanType = "one-time" | "autopay-replenishment";
+
 export class MoneyPolicyError extends Error {
   constructor(
     message: string,
@@ -24,6 +26,8 @@ export function validateMoneyAction(
   lines: CartLine[],
   approved: boolean,
   voucher?: VoucherInput | null,
+  planType: PlanType = "one-time",
+  recurringCadenceDays?: number,
 ) {
   if (!approved) throw new MoneyPolicyError("Explicit buyer approval is required.", "APPROVAL_REQUIRED");
   if (!Array.isArray(lines) || lines.length === 0) throw new MoneyPolicyError("Cart is empty.", "EMPTY_CART");
@@ -56,7 +60,21 @@ export function validateMoneyAction(
     discountPaise = Math.min(voucher.discountPaise, maxDiscountAllowed);
   }
 
+  // 5% additional discount for automated recurring replenishment subscribers
+  if (planType === "autopay-replenishment") {
+    const subscriberDiscount = Math.round(originalAmountPaise * 0.05);
+    discountPaise = Math.min(originalAmountPaise * 0.35, discountPaise + subscriberDiscount);
+  }
+
   const finalAmountPaise = Math.max(100, originalAmountPaise - discountPaise); // Minimum 1 INR
 
-  return { resolved, amountPaise: finalAmountPaise, originalAmountPaise, discountPaise, voucherCode: voucher?.code };
+  return {
+    resolved,
+    amountPaise: finalAmountPaise,
+    originalAmountPaise,
+    discountPaise,
+    voucherCode: voucher?.code,
+    planType,
+    recurringCadenceDays: planType === "autopay-replenishment" ? (recurringCadenceDays ?? 20) : undefined,
+  };
 }

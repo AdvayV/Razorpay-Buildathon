@@ -2,6 +2,8 @@ import { catalog, formatInr } from "@/lib/catalog";
 import { demandSignalMap, getDemandSignals, type DemandDirection } from "@/lib/demand-trends";
 import { compareMarketOffers } from "@/lib/market-comparison";
 import { isGroqConfigured, parseQueryWithGroq } from "@/lib/groq";
+import { getQuickCommerceComparison } from "@/lib/quick-commerce";
+import { calculateConsumptionForecast, type HouseholdProfile } from "@/lib/consumption-engine";
 
 function extractBudgetPaise(message: string) {
   const match = message.replace(/,/g, "").match(/(?:under|below|budget|upto|up to)\s*(?:rs\.?|₹)?\s*(\d+)/i);
@@ -14,9 +16,34 @@ function demandBoost(direction: DemandDirection) {
   return 0;
 }
 
+// Extract family size and daily usage context from natural language
+function extractHouseholdContext(message: string): HouseholdProfile {
+  const normalized = message.toLowerCase();
+
+  // Match family size e.g. "2 member family", "family of 4", "3 people", "2 person"
+  let familyMembers = 2;
+  const memberMatch = normalized.match(/(?:family of|for)\s*(\d+)|\b(\d+)\s*(?:member|person|people|members|persons)/i);
+  if (memberMatch) {
+    familyMembers = parseInt(memberMatch[1] || memberMatch[2], 10);
+  }
+
+  // Match cups/servings per day e.g. "2 cups a day", "3 times daily", "1 cup per day"
+  let dailyServingsPerMember = 2;
+  const servingMatch = normalized.match(/(\d+)\s*(?:cups?|servings?|times?|washes?)\s*(?:a|per|\/)\s*day/i);
+  if (servingMatch) {
+    dailyServingsPerMember = parseInt(servingMatch[1], 10);
+  }
+
+  return {
+    familyMembers: Math.max(1, Math.min(8, familyMembers)),
+    dailyServingsPerMember: Math.max(1, Math.min(6, dailyServingsPerMember)),
+  };
+}
+
 export async function makeRecommendation(message: string) {
   const normalized = message.toLowerCase();
   const allUniqueTags = Array.from(new Set(catalog.flatMap((item) => item.tags)));
+  const householdProfile = extractHouseholdContext(message);
 
   // Try LLM parsing with Groq LPU (guarded with caching, throttle, and fallback)
   const groqResult = await parseQueryWithGroq(message, allUniqueTags);
@@ -141,6 +168,8 @@ export async function makeRecommendation(message: string) {
     demand: signal,
     selectionEvidence: candidateEvidence.find((candidate) => candidate.itemId === item.id),
     marketComparison: compareMarketOffers(item.id),
+    quickCommerce: getQuickCommerceComparison(item.id),
+    consumptionForecast: calculateConsumptionForecast(item, householdProfile),
   }));
   const rejectedCandidates = candidateEvidence.filter((candidate) => candidate.outcome === "not-selected");
 
@@ -158,6 +187,7 @@ export async function makeRecommendation(message: string) {
     message,
     budgetPaise,
     inferredTags,
+    householdProfile,
     items: selectedItems,
     totalPaise,
     primaryRevenuePaise: primary.pricePaise,
@@ -213,7 +243,7 @@ export async function makeRecommendation(message: string) {
     decisionTrace: [
       {
         step: "Understand",
-        detail: `Detected ${inferredTags.slice(0, 2).join(" + ")} with a ${formatInr(budgetPaise)} ceiling (${groqResult.source === "groq-llm" ? "Groq LLM fast inference" : "deterministic parser"}).`,
+        detail: `Detected ${inferredTags.slice(0, 2).join(" + ")} with a ${formatInr(budgetPaise)} ceiling for ${householdProfile.familyMembers}-member household (${householdProfile.dailyServingsPerMember} servings/day).`,
       },
       {
         step: "Rank",

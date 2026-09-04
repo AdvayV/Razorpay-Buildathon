@@ -1,6 +1,6 @@
 # Revenue Pilot
 
-An explainable agentic storefront for the Razorpay Buildathon. A buyer describes what they need, the agent recommends a bounded cart, allows multi-agent bargaining, and only an explicit approval can create a Razorpay test-mode payment link.
+An explainable agentic storefront for the Razorpay Buildathon. A buyer describes what they need, the agent models household consumption burn rates, compares live Quick-Commerce landed costs (BigBasket, Blinkit, Zepto), bargains autonomously with dynamic vouchers, and issues buyer-approved Razorpay 1-click & UPI Autopay replenishment links.
 
 **Live demo:** [razorpay-buildathon-theta.vercel.app](https://razorpay-buildathon-theta.vercel.app)
 
@@ -8,12 +8,14 @@ The public deployment runs in safe mock-payment mode, so judges can test recomme
 
 ## What the MVP proves
 
+- **Household Consumption Engine**: Internet-calibrated serving benchmarks (*e.g. 10g coffee/cup × 2 cups/day × 2 members = 40g/day $\rightarrow$ 500g lasts 12 days*).
+- **Autonomous UPI Autopay Replenishment**: Triggers recurring auto-orders with a 2-day buffer and gives subscribers an extra 5% discount.
+- **Quick-Commerce Price Radar & Arbitrage**: Compares true landed costs ($Item + Delivery + Surge$) across BigBasket, Blinkit, Zepto, and Local Store with an autonomous Price-Match Guarantee.
 - **Hybrid Neuro-Symbolic Agent**: Groq LPU (`llama-3.1-8b-instant`) intent parsing with economical token management and local deterministic fallback.
 - **Multi-Agent Negotiation**: Buyer Agent and Merchant Margin Sentinel autonomously negotiate volume/clearance discounts with dynamic voucher generation.
 - **Dedicated Transaction Reasoning Trail**: Step-by-step causal lineage for every transaction in the sidebar.
 - **Agent-readable catalog and natural-language product discovery**.
 - **Explainable demand-aware ranking** with rising, stable and falling signals.
-- **Agent-readable Amazon, Flipkart, direct-brand and local landed-cost comparison**.
 - **Revenue growth through a budget-aware cross-sell**.
 - **Human approval gate** before every money action.
 - **Server-side catalog pricing, quantity rules and a ₹10,000 hard limit**.
