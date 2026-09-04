@@ -1,6 +1,7 @@
 import { catalog, formatInr } from "@/lib/catalog";
 import { demandSignalMap, getDemandSignals, type DemandDirection } from "@/lib/demand-trends";
 import { compareMarketOffers } from "@/lib/market-comparison";
+import { isGroqConfigured, parseQueryWithGroq } from "@/lib/groq";
 
 function extractBudgetPaise(message: string) {
   const match = message.replace(/,/g, "").match(/(?:under|below|budget|upto|up to)\s*(?:rs\.?|₹)?\s*(\d+)/i);
@@ -13,17 +14,30 @@ function demandBoost(direction: DemandDirection) {
   return 0;
 }
 
-export function makeRecommendation(message: string) {
+export async function makeRecommendation(message: string) {
   const normalized = message.toLowerCase();
-  const requestedBudgetPaise = extractBudgetPaise(normalized);
+  const allUniqueTags = Array.from(new Set(catalog.flatMap((item) => item.tags)));
+
+  // Try LLM parsing with Groq LPU (guarded with caching, throttle, and fallback)
+  const groqResult = await parseQueryWithGroq(message, allUniqueTags);
+
+  const requestedBudgetPaise =
+    groqResult.budgetPaise !== null ? groqResult.budgetPaise : extractBudgetPaise(normalized);
   const budgetPaise = Math.min(requestedBudgetPaise, 1_000_000);
   const budgetWasCapped = requestedBudgetPaise > budgetPaise;
+
   const signals = getDemandSignals();
   const signalByItem = demandSignalMap();
-  const intentTags = catalog
-    .flatMap((item) => item.tags)
-    .filter((tag, index, tags) => tags.indexOf(tag) === index && normalized.includes(tag));
-  const inferredTags = intentTags.length ? intentTags : ["daily", "grocery"];
+
+  let inferredTags: string[] = [];
+  if (groqResult.inferredTags.length > 0) {
+    inferredTags = groqResult.inferredTags;
+  } else {
+    const matched = catalog
+      .flatMap((item) => item.tags)
+      .filter((tag, index, tags) => tags.indexOf(tag) === index && normalized.includes(tag));
+    inferredTags = matched.length ? matched : ["daily", "grocery"];
+  }
 
   const scored = catalog.map((item) => {
     const signal = signalByItem.get(item.id);
@@ -130,6 +144,16 @@ export function makeRecommendation(message: string) {
   }));
   const rejectedCandidates = candidateEvidence.filter((candidate) => candidate.outcome === "not-selected");
 
+  // Determine explanation source & text
+  const explanation =
+    groqResult.source === "groq-llm" && groqResult.explanation
+      ? groqResult.explanation
+      : `${primary.name} ranked first because it matched ${primaryResult.matchedTags.join(", ") || "the default daily-use intent"}. Its score was ${primaryResult.relevancePoints} relevance points plus ${primaryResult.demandPoints} demand points. ${
+          upsell
+            ? `${upsell.name} was added because it shares catalogue context with the primary item and keeps the total within the ${formatInr(budgetPaise)} budget.`
+            : "No add-on was included because the remaining budget or compatibility rule rejected the alternatives."
+        }`;
+
   return {
     message,
     budgetPaise,
@@ -139,6 +163,7 @@ export function makeRecommendation(message: string) {
     primaryRevenuePaise: primary.pricePaise,
     incrementalRevenuePaise,
     upliftPercent,
+    intelligenceSource: groqResult.source,
     decisionEvidence: {
       scoringFormula: "total score = 4 points per matched intent tag + demand adjustment (+2 rising, 0 stable, -1 falling)",
       inferredTags,
@@ -184,13 +209,12 @@ export function makeRecommendation(message: string) {
         changePercent: topFalling.changePercent,
       },
     },
-    explanation: `${primary.name} ranked first because it matched ${primaryResult.matchedTags.join(", ") || "the default daily-use intent"}. Its score was ${primaryResult.relevancePoints} relevance points plus ${primaryResult.demandPoints} demand points. ${
-      upsell
-        ? `${upsell.name} was added because it shares catalogue context with the primary item and keeps the total within the ${formatInr(budgetPaise)} budget.`
-        : "No add-on was included because the remaining budget or compatibility rule rejected the alternatives."
-    }`,
+    explanation,
     decisionTrace: [
-      { step: "Understand", detail: `Detected ${inferredTags.slice(0, 2).join(" + ")} with a ${formatInr(budgetPaise)} ceiling.` },
+      {
+        step: "Understand",
+        detail: `Detected ${inferredTags.slice(0, 2).join(" + ")} with a ${formatInr(budgetPaise)} ceiling (${groqResult.source === "groq-llm" ? "Groq LLM fast inference" : "deterministic parser"}).`,
+      },
       {
         step: "Rank",
         detail: `${primary.name}: ${primaryResult.relevancePoints} relevance + ${primaryResult.demandPoints} demand = ${primaryResult.totalScore} points.`,

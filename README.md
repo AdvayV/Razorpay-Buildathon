@@ -1,6 +1,6 @@
 # Revenue Pilot
 
-An explainable agentic storefront for the Razorpay Buildathon. A buyer describes what they need, the agent recommends a bounded cart, and only an explicit approval can create a Razorpay test-mode payment link.
+An explainable agentic storefront for the Razorpay Buildathon. A buyer describes what they need, the agent recommends a bounded cart, allows multi-agent bargaining, and only an explicit approval can create a Razorpay test-mode payment link.
 
 **Live demo:** [razorpay-buildathon-theta.vercel.app](https://razorpay-buildathon-theta.vercel.app)
 
@@ -8,17 +8,18 @@ The public deployment runs in safe mock-payment mode, so judges can test recomme
 
 ## What the MVP proves
 
-- Agent-readable catalog and natural-language product discovery
-- Explainable demand-aware ranking with rising, stable and falling signals
-- Agent-readable Amazon, Flipkart, direct-brand and local landed-cost comparison
-- Revenue growth through a budget-aware cross-sell
-- A human approval gate before every money action
-- Server-side catalog pricing, quantity rules and a ₹10,000 hard limit
-- Razorpay's hosted MCP server using `create_payment_link`
-- HMAC-SHA256 webhook verification and duplicate-event protection
-- A visible audit trail explaining recommendations, gates and outcomes
-- A decision dashboard for scores, tag matches, rejection classes, budgets and webhook outcomes
-- A graceful MCP failure demo where no payment link is issued
+- **Hybrid Neuro-Symbolic Agent**: Groq LPU (`llama-3.1-8b-instant`) intent parsing with economical token management and local deterministic fallback.
+- **Multi-Agent Negotiation**: Buyer Agent and Merchant Margin Sentinel autonomously negotiate volume/clearance discounts with dynamic voucher generation.
+- **Dedicated Transaction Reasoning Trail**: Step-by-step causal lineage for every transaction in the sidebar.
+- **Agent-readable catalog and natural-language product discovery**.
+- **Explainable demand-aware ranking** with rising, stable and falling signals.
+- **Agent-readable Amazon, Flipkart, direct-brand and local landed-cost comparison**.
+- **Revenue growth through a budget-aware cross-sell**.
+- **Human approval gate** before every money action.
+- **Server-side catalog pricing, quantity rules and a ₹10,000 hard limit**.
+- **Razorpay's hosted MCP server** using `create_payment_link`.
+- **HMAC-SHA256 webhook verification** and duplicate-event protection.
+- **Dual-mode sidebar**: Switch between the Transaction Story and the Raw Audit Stream.
 
 ## Run it now
 
@@ -31,6 +32,22 @@ npm.cmd run dev
 
 Open [http://localhost:3000](http://localhost:3000). The default behavior is mock mode, so the complete local demo works without credentials or real money.
 
+## Connect Groq API (Optional)
+
+1. Open `.env.local`
+2. Add your Groq API key:
+   ```env
+   GROQ_API_KEY=gsk_your_groq_api_key_here
+   GROQ_MODEL=llama-3.1-8b-instant
+   ```
+3. Restart `npm.cmd run dev`.
+
+The system includes:
+- Ultra-fast sub-second inference using `llama-3.1-8b-instant`.
+- In-memory 10-minute caching to eliminate duplicate token burn.
+- Throttling guards to prevent 429 rate limit spikes.
+- Automatic fallback to the local deterministic rule engine if no key is present or if rate-limited.
+
 ## Connect Razorpay test mode
 
 1. Copy `.env.example` to `.env.local`.
@@ -40,162 +57,3 @@ Open [http://localhost:3000](http://localhost:3000). The default behavior is moc
 5. Restart `npm.cmd run dev`.
 
 The backend derives a temporary Basic merchant token and connects directly to `https://mcp.razorpay.com/mcp`. Credentials remain server-side. Never commit `.env.local`.
-
-## Use the project-local Razorpay CLI
-
-The official Windows CLI is installed in `.tools/razorpay` and reads the same test credentials from `.env.local`. It is separate from MCP: use the CLI for direct developer inspection and MCP for agent tool calls.
-
-```powershell
-npm.cmd run razorpay -- --version
-npm.cmd run razorpay -- orders list --count 5
-npm.cmd run razorpay -- payment-links list --count 5
-```
-
-The project wrapper blocks live keys. It also blocks possible write operations until you explicitly acknowledge them with `--allow-write`:
-
-```powershell
-npm.cmd run razorpay -- orders create --amount 50000 --currency INR --receipt buildathon-001 --allow-write
-```
-
-Razorpay expresses INR amounts in paise, so `50000` means Rs. 500. Keep CLI writes in Test Mode; the storefront's normal payment path remains approval-gated through MCP.
-
-## Enable the webhook
-
-The endpoint is:
-
-```text
-POST https://YOUR-PUBLIC-HOST/api/webhooks/razorpay
-```
-
-Configure it in **Razorpay Dashboard → Accounts & Settings → Webhooks** while the Dashboard is in Test Mode:
-
-1. Enter the public HTTPS endpoint. Razorpay cannot call `localhost` directly.
-2. Create a webhook secret that is different from your API secret.
-3. Store that same value as `RAZORPAY_WEBHOOK_SECRET`.
-4. Enable at least `payment_link.paid` and `payment.failed`.
-5. Use test-mode OTP `754081` if Razorpay asks for one.
-
-For a local webhook demo, expose the app with a supported tunnel such as zrok, then use its HTTPS URL. The webhook route validates the signature against the untouched request body, recognizes duplicate `x-razorpay-event-id` values, and responds quickly.
-
-## Enable Telegram merchant alerts
-
-1. Create a bot using the official `@BotFather` and send `/start` to the new bot.
-2. Put the private bot token and numeric chat ID in `.env.local`.
-3. Set `TELEGRAM_NOTIFICATIONS=true` and restart the app.
-
-```env
-TELEGRAM_BOT_TOKEN=123456789:replace_with_your_token
-TELEGRAM_CHAT_ID=123456789
-TELEGRAM_NOTIFICATIONS=true
-```
-
-The app sends server-side alerts for created payment links, verified Razorpay events, demo payment results and safely stopped checkouts. Telegram delivery runs after the payment response and cannot expose the token to the browser.
-
-## Architecture
-
-```text
-Buyer request
-    ↓
-Recommendation agent ───→ explainable cart + cross-sell
-    ↓                              ↓
-Explicit approval          live audit trail
-    ↓                              ↑
-Server policy gate ────────────────┤
-    ↓                              │
-Razorpay hosted MCP                │
-    ↓                              │
-Test payment link                  │
-    ↓                              │
-Signed Razorpay webhook ───────────┘
-```
-
-The MCP server performs the outbound Razorpay action. The webhook independently confirms what happened afterward; a browser redirect is not trusted as payment proof.
-
-## Demand radar and Google Trends
-
-The catalogue now covers daily-use beverages, skincare, kitchen utensils, haircare, sunscreen, vegetables, fruits, grocery staples and laundry care. Each product has a search query and an explainable demand direction that can influence ranking, but never its server-owned price.
-
-The current values are a deterministic **demo snapshot**, clearly labelled in the UI. They are not presented as live Google Trends data or as sales forecasts. Each product links to its matching Google Trends Explore query for manual validation.
-
-Google's official Trends API is currently limited to approved alpha testers. After access is granted, replace the demo provider in `lib/demand-trends.ts`; the recommendation, audit and checkout layers do not need to change. Apply through the [official Google Trends API page](https://developers.google.com/search/apis/trends).
-
-## Transparent local recommendations
-
-Every recommendation publishes its scoring formula, matched intent tags, relevance points, demand adjustment, total score, budget fit and rejection reason for every candidate. A counterfactual check shows whether removing demand data would change the primary choice. Before approval, the UI explicitly states that no Razorpay Order, payment link or charge exists. All explanation text comes directly from the local deterministic scorecard; no third-party AI API is called.
-
-## Market comparison and decision dashboard
-
-Each selected product includes normalized local merchant, Amazon, Flipkart and direct-brand offers. The agent reports item price, shipping, landed cost, delivery estimate and trust separately, then identifies the winner for each dimension without hiding them inside one blended score. External prices are explicitly labelled as illustrative deterministic demo values until an official marketplace or affiliate feed is connected. External offers never enter Razorpay checkout; the local server catalogue remains the only pricing authority.
-
-The comparison is also available as agent-readable JSON at `/api/market/compare?itemId=CATALOG_ITEM_ID`. The decision dashboard summarizes candidates evaluated, selected and rejected products, tag coverage, score margin, budget utilization and categorized audit events. Invalid, duplicate and malformed webhook deliveries are recorded with safe reason codes and no signature disclosure.
-
-## Two-minute judge demo
-
-1. Enter: “Build a skincare routine with face wash and sunscreen below ₹1,200.”
-2. Show the four-step **Understand → Rank → Grow → Gate** decision trace.
-3. Point out the cross-sell amount and percentage revenue uplift, then the three active safety boundaries.
-4. Click **Approve & create payment link** and complete the mock/test checkout.
-5. Return to show the success event in the audit trail.
-6. Click **Test graceful MCP failure** and show that the agent reports no charge and records the failure.
-
-## Useful commands
-
-```powershell
-npm.cmd run typecheck
-npm.cmd run lint
-npm.cmd run build
-```
-
-The project scripts launch Node with the Windows system certificate store. This is required on the current development network and keeps Razorpay MCP TLS verification enabled.
-
-Official references: [Razorpay MCP server](https://github.com/razorpay/razorpay-mcp-server), [Razorpay webhook validation](https://razorpay.com/docs/webhooks/validate-test/), and [webhook setup](https://razorpay.com/docs/webhooks/setup-edit-payments/).
-
-## How to view the website locally
-
-Follow these steps from the project folder:
-
-```powershell
-cd "C:\Advay study\VIT\Razorpay Buildathon"
-npm.cmd install
-npm.cmd run dev
-```
-
-Then open this URL in your browser:
-
-```text
-http://localhost:3000
-```
-
-What you should see:
-
-- The homepage with a shopping prompt box
-- Example queries for coffee, skincare, groceries and kitchen essentials
-- A recommendation panel showing suggested items and reasoning
-- An audit panel listing events and actions taken
-- A button to approve and create a payment link
-
-If you are testing the app with mock mode enabled, the app will work without real Razorpay credentials. The payment flow is still simulated locally, so no real money is moved.
-
-If you want to enable the real Razorpay test flow:
-
-1. Copy `.env.example` to `.env.local`
-2. Add your real Razorpay test keys
-3. Set `PAYMENTS_MOCK_MODE=false`
-4. Restart the app with:
-
-```powershell
-npm.cmd run dev
-```
-
-Once the server is running, any browser page that calls the app will use the local frontend at `http://localhost:3000` and the local backend API routes live under the same app.
-
-For a beginner, the easiest way to understand the app is to:
-
-1. Open the homepage in the browser
-2. Type a shopping request
-3. Observe the recommendation
-4. Click the approval button
-5. Watch the audit log update
-6. Repeat with a different prompt
-
-That flow shows how the app moves from buyer request to product recommendation to payment preparation to event tracking.

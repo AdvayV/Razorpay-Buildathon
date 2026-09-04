@@ -12,13 +12,14 @@ export async function POST(request: Request) {
     }
 
     const actionId = randomUUID();
-    const recommendation = makeRecommendation(body.message.trim());
+    const recommendation = await makeRecommendation(body.message.trim());
     writeAudit({
       actionId,
       type: "agent.recommendation",
-      summary: `Proposed ${recommendation.items.length} items with ${formatInr(recommendation.incrementalRevenuePaise)} growth uplift`,
+      summary: `Proposed ${recommendation.items.length} items (${recommendation.intelligenceSource === "groq-llm" ? "Groq LLM" : "Local engine"}) with ${formatInr(recommendation.incrementalRevenuePaise)} uplift`,
       detail: {
         buyerIntent: body.message.trim(),
+        intelligenceSource: recommendation.intelligenceSource,
         inferredTags: recommendation.inferredTags,
         budgetPaise: recommendation.budgetPaise,
         selectedItemIds: recommendation.items.map((item) => item.id),
@@ -42,14 +43,15 @@ export async function POST(request: Request) {
           localOfferCheckoutEligible: true,
           externalOffersCheckoutEligible: false,
         })),
-        explanationSource: "local-scoring-engine",
+        explanationSource: recommendation.intelligenceSource,
         moneyActionState: recommendation.moneyAction.state,
       },
       level: "info",
     });
 
     return NextResponse.json({ actionId, ...recommendation });
-  } catch {
+  } catch (err) {
+    console.error("Agent recommendation error:", err);
     return NextResponse.json({ error: "The agent could not form a recommendation." }, { status: 500 });
   }
 }

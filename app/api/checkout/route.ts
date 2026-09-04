@@ -1,7 +1,7 @@
 import { after, NextResponse } from "next/server";
 import { writeAudit, getCheckoutResult, setCheckoutResult } from "@/lib/audit";
 import { formatInr } from "@/lib/catalog";
-import { MoneyPolicyError, validateMoneyAction, type CartLine } from "@/lib/policy";
+import { MoneyPolicyError, validateMoneyAction, type CartLine, type VoucherInput } from "@/lib/policy";
 import { createPaymentLinkWithMcp } from "@/lib/razorpay-mcp";
 import { isTelegramConfigured, sendTelegramMessage } from "@/lib/telegram";
 
@@ -10,6 +10,7 @@ type CheckoutBody = {
   approved?: unknown;
   items?: unknown;
   simulateFailure?: unknown;
+  voucher?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -27,11 +28,17 @@ export async function POST(request: Request) {
       return NextResponse.json(existing);
     }
 
-    const { resolved, amountPaise } = validateMoneyAction(body.items as CartLine[], body.approved === true);
+    const voucher = body.voucher as VoucherInput | undefined;
+    const { resolved, amountPaise, originalAmountPaise, discountPaise, voucherCode } = validateMoneyAction(
+      body.items as CartLine[],
+      body.approved === true,
+      voucher,
+    );
+
     writeAudit({
       actionId,
       type: "money.gate_passed",
-      summary: `Buyer approved a bounded ${formatInr(amountPaise)} checkout`,
+      summary: `Buyer approved a bounded ${formatInr(amountPaise)} checkout${discountPaise > 0 ? ` (${formatInr(discountPaise)} negotiated discount applied)` : ""}`,
       detail: {
         proposedAction: "create_payment_link",
         approvalReceived: true,
@@ -43,9 +50,19 @@ export async function POST(request: Request) {
           unitPricePaise: item.pricePaise,
           lineTotalPaise: item.pricePaise * item.quantity,
         })),
+        originalAmountPaise,
+        discountPaise,
+        voucherCode,
         amountPaise,
         maxAllowedPaise: 1_000_000,
-        checksPassed: ["explicit approval", "known catalog IDs", "quantity 1-3", "unique lines", "total at or below Rs. 10,000"],
+        checksPassed: [
+          "explicit approval",
+          "known catalog IDs",
+          "quantity 1-3",
+          "unique lines",
+          "total at or below Rs. 10,000",
+          voucherCode ? `voucher ${voucherCode} verified within 35% margin limit` : "standard pricing",
+        ],
       },
       level: "success",
     });
@@ -67,7 +84,7 @@ export async function POST(request: Request) {
           description: resolved.map((item) => `${item.quantity}× ${item.name}`).join(", "),
         });
 
-    const response = { ...result, amountPaise, referenceId };
+    const response = { ...result, amountPaise, originalAmountPaise, discountPaise, referenceId };
     setCheckoutResult(actionId, response);
     writeAudit({
       actionId,
@@ -77,6 +94,9 @@ export async function POST(request: Request) {
         actionPerformed: "create_payment_link",
         razorpayOrderCreated: false,
         amountPaise,
+        originalAmountPaise,
+        discountPaise,
+        voucherCode,
         referenceId,
         paymentLinkId: result.paymentLinkId,
         provider: result.provider,
@@ -87,7 +107,12 @@ export async function POST(request: Request) {
     if (isTelegramConfigured()) after(async () => {
       const notification = await sendTelegramMessage({
         title: "Payment link created",
-        lines: [`Amount: ${formatInr(amountPaise)}`, `Reference: ${referenceId}`, `Provider: ${result.provider}`],
+        lines: [
+          `Amount: ${formatInr(amountPaise)}`,
+          discountPaise > 0 ? `Discount: ${formatInr(discountPaise)} (${voucherCode})` : "",
+          `Reference: ${referenceId}`,
+          `Provider: ${result.provider}`,
+        ].filter(Boolean),
         level: "info",
       });
       writeAudit({

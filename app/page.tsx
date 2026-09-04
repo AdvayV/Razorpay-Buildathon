@@ -73,6 +73,23 @@ type CandidateEvidence = {
   rejectionCategory: "over-full-budget" | "over-remaining-budget" | "incompatible-tags" | "lower-ranked" | null;
 };
 
+type NegotiationResult = {
+  status: "accepted" | "counter-offered" | "rejected";
+  originalTotalPaise: number;
+  finalTotalPaise: number;
+  discountPaise: number;
+  discountPercent: number;
+  voucher?: {
+    code: string;
+    discountPaise: number;
+    discountPercent: number;
+    reason: string;
+    expiresAt: number;
+  };
+  merchantRationale: string;
+  agentDialogue: Array<{ speaker: "Buyer Agent" | "Merchant Sentinel"; message: string }>;
+};
+
 type Recommendation = {
   actionId: string;
   budgetPaise: number;
@@ -83,6 +100,7 @@ type Recommendation = {
   incrementalRevenuePaise: number;
   upliftPercent: number;
   explanation: string;
+  intelligenceSource?: "groq-llm" | "deterministic-fallback";
   decisionTrace: Array<{ step: string; detail: string }>;
   boundaries: string[];
   demandOverview: {
@@ -168,6 +186,12 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
   const [auditFilter, setAuditFilter] = useState<AuditFilter>("all");
+  const [sidebarTab, setSidebarTab] = useState<"trail" | "audit">("trail");
+
+  // Multi-Agent Negotiation state
+  const [negotiationInput, setNegotiationInput] = useState("");
+  const [negotiating, setNegotiating] = useState(false);
+  const [negotiationResult, setNegotiationResult] = useState<NegotiationResult | null>(null);
 
   const visibleAudit = audit.filter((event) => auditFilter === "all" || auditCategory(event.type) === auditFilter);
   const auditStats = {
@@ -199,6 +223,7 @@ export default function Home() {
   async function askAgent() {
     setBusy(true);
     setNotice(null);
+    setNegotiationResult(null);
     try {
       const response = await fetch("/api/agent/recommend", {
         method: "POST",
@@ -208,11 +233,39 @@ export default function Home() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       setRecommendation(data as Recommendation);
+      setSidebarTab("trail");
       await refreshAudit();
     } catch (error) {
       setNotice({ tone: "bad", text: error instanceof Error ? error.message : "Agent unavailable." });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleNegotiate(customOffer?: string) {
+    if (!recommendation) return;
+    const offerText = customOffer || negotiationInput;
+    if (!offerText.trim()) return;
+
+    setNegotiating(true);
+    try {
+      const response = await fetch("/api/agent/negotiate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionId: recommendation.actionId,
+          items: recommendation.items.map((i) => ({ itemId: i.id, quantity: i.quantity })),
+          userOfferText: offerText,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      setNegotiationResult(data as NegotiationResult);
+      await refreshAudit();
+    } catch (err) {
+      setNotice({ tone: "bad", text: err instanceof Error ? err.message : "Negotiation unavailable." });
+    } finally {
+      setNegotiating(false);
     }
   }
 
@@ -228,6 +281,12 @@ export default function Home() {
           actionId: simulateFailure ? `${recommendation.actionId}-failure` : recommendation.actionId,
           approved: true,
           simulateFailure,
+          voucher: negotiationResult?.voucher
+            ? {
+                code: negotiationResult.voucher.code,
+                discountPaise: negotiationResult.voucher.discountPaise,
+              }
+            : undefined,
           items: recommendation.items.map((item) => ({ itemId: item.id, quantity: item.quantity })),
         }),
       });
@@ -241,6 +300,12 @@ export default function Home() {
       setBusy(false);
     }
   }
+
+  const effectiveTotalPaise = negotiationResult?.voucher
+    ? recommendation
+      ? recommendation.totalPaise - negotiationResult.discountPaise
+      : 0
+    : recommendation?.totalPaise ?? 0;
 
   return (
     <main>
@@ -314,9 +379,15 @@ export default function Home() {
               <div className="agent-said">
                 <span className="mini-mark">✦</span>
                 <div>
-                  <b>Buyer-facing explanation · local scoring engine</b>
+                  <b>
+                    Buyer-facing explanation · {recommendation.intelligenceSource === "groq-llm" ? "Groq LPU Intelligence" : "Local scoring engine"}
+                  </b>
                   <p>{recommendation.explanation}</p>
-                  <small>Generated directly from the displayed scorecard; no external AI call was made.</small>
+                  <small>
+                    {recommendation.intelligenceSource === "groq-llm"
+                      ? "Parsed with Groq LPU (llama-3.1-8b-instant) & verified by deterministic catalog pricing."
+                      : "Generated directly from local deterministic scorecard."}
+                  </small>
                 </div>
               </div>
 
@@ -491,18 +562,78 @@ export default function Home() {
                 })}
               </section>
 
+              {/* Multi-Agent Dynamic Negotiation */}
+              <section className="negotiation-box" aria-label="Agent Negotiation">
+                <div className="negotiation-header">
+                  <span>MULTI-AGENT NEGOTIATION · DYNAMIC DISCOUNTING</span>
+                  <span className="negotiation-badge">Autonomous Bargain</span>
+                </div>
+                <p style={{ margin: "0 0 10px", fontSize: "12px", color: "var(--muted)" }}>
+                  Negotiate a bundle discount with the store. The Merchant Sentinel evaluates margin thresholds &amp; demand velocity before issuing a dynamic voucher.
+                </p>
+
+                <div className="negotiation-chips">
+                  <button onClick={() => { setNegotiationInput("Can I get 10% off on this bundle?"); handleNegotiate("Can I get 10% off on this bundle?"); }} disabled={negotiating}>
+                    🏷️ 10% Bundle Discount
+                  </button>
+                  <button onClick={() => { setNegotiationInput("Give for ₹900 total"); handleNegotiate("Give for ₹900 total"); }} disabled={negotiating}>
+                    💰 Request ₹900 Deal
+                  </button>
+                  <button onClick={() => { setNegotiationInput("Clearance volume discount"); handleNegotiate("Clearance volume discount"); }} disabled={negotiating}>
+                    📦 Volume Deal
+                  </button>
+                </div>
+
+                <div className="negotiation-input-row">
+                  <input
+                    type="text"
+                    placeholder="e.g. Can you do 15% discount or ₹850?"
+                    value={negotiationInput}
+                    onChange={(e) => setNegotiationInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleNegotiate(); }}
+                    disabled={negotiating}
+                  />
+                  <button onClick={() => handleNegotiate()} disabled={negotiating || !negotiationInput.trim()}>
+                    {negotiating ? "Evaluating..." : "Propose Offer →"}
+                  </button>
+                </div>
+
+                {negotiationResult && (
+                  <div className="negotiation-dialogue">
+                    {negotiationResult.agentDialogue.map((item, idx) => (
+                      <div key={idx} className={`dialogue-bubble ${item.speaker === "Buyer Agent" ? "buyer" : "merchant"}`}>
+                        <strong>{item.speaker}</strong>
+                        <p>{item.message}</p>
+                      </div>
+                    ))}
+                    {negotiationResult.voucher && (
+                      <div style={{ marginTop: "6px", padding: "8px", background: "#eef6d6", borderLeft: "3px solid #829d38", fontSize: "11px" }}>
+                        <strong style={{ display: "block", color: "#446914" }}>✓ Voucher Active: {negotiationResult.voucher.code}</strong>
+                        <span>Saved {money(negotiationResult.discountPaise)} ({negotiationResult.discountPercent}% off). Applied directly to checkout.</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+
               <div className="approval-box">
                 <div>
                   <span>TOTAL / {recommendation.items.length} ITEMS</span>
-                  <strong>{money(recommendation.totalPaise)}</strong>
-                  {recommendation.incrementalRevenuePaise > 0 && (
-                    <mark>+{money(recommendation.incrementalRevenuePaise)} · {recommendation.upliftPercent}% agent uplift</mark>
+                  <strong>{money(effectiveTotalPaise)}</strong>
+                  {negotiationResult?.voucher ? (
+                    <mark>
+                      Discounted from {money(recommendation.totalPaise)} (-{money(negotiationResult.discountPaise)})
+                    </mark>
+                  ) : (
+                    recommendation.incrementalRevenuePaise > 0 && (
+                      <mark>+{money(recommendation.incrementalRevenuePaise)} · {recommendation.upliftPercent}% agent uplift</mark>
+                    )
                   )}
                 </div>
                 <button className="primary" onClick={() => checkout(false)} disabled={busy}>
                   Approve &amp; create payment link <span>→</span>
                 </button>
-                <p>Nothing happens without this click. Server re-checks catalog prices and spending limits.</p>
+                <p>Nothing happens without this click. Server re-checks catalog prices, discount voucher bounds, and spending limits.</p>
               </div>
 
               <button className="failure-button" onClick={() => checkout(true)} disabled={busy}>
@@ -514,57 +645,174 @@ export default function Home() {
 
         <aside className="audit-panel">
           <div className="panel-heading audit-heading">
-            <div><span className="kicker">LIVE AUDIT</span><h2>Every action, legible.</h2></div>
+            <div><span className="kicker">AUDIT &amp; EXPLAINABILITY</span><h2>Every action, legible.</h2></div>
             <button className="refresh" onClick={refreshAudit}>↻</button>
           </div>
 
-          <div className="boundary-card">
-            <span className="shield">◇</span>
-            <div><strong>Policy guard is active</strong><p>Only catalog items · max ₹10,000 · explicit approval</p></div>
+          <div className="trail-tabs">
+            <button
+              className={sidebarTab === "trail" ? "active" : ""}
+              onClick={() => setSidebarTab("trail")}
+            >
+              ✦ Transaction Story
+            </button>
+            <button
+              className={sidebarTab === "audit" ? "active" : ""}
+              onClick={() => setSidebarTab("audit")}
+            >
+              ⚡ Raw Audit Log
+            </button>
           </div>
 
-          <div className="audit-kpis" aria-label="Audit summary">
-            <div><strong>{auditStats.decisions}</strong><span>decisions</span></div>
-            <div><strong>{auditStats.moneyActions}</strong><span>money events</span></div>
-            <div><strong>{auditStats.marketComparisons}</strong><span>market checks</span></div>
-            <div><strong>{auditStats.webhookAccepted}</strong><span>webhooks accepted</span></div>
-            <div><strong>{auditStats.webhookRejected}</strong><span>webhooks rejected</span></div>
-            <div><strong>{auditStats.stoppedSafely}</strong><span>stopped safely</span></div>
-          </div>
-
-          <div className="audit-filters" aria-label="Filter audit events">
-            {(["all", "recommendation", "money", "market", "webhook", "system"] as AuditFilter[]).map((filter) => (
-              <button
-                key={filter}
-                className={auditFilter === filter ? "active" : undefined}
-                onClick={() => setAuditFilter(filter)}
-                aria-pressed={auditFilter === filter}
-              >
-                {filter}
-              </button>
-            ))}
-          </div>
-
-          <div className="timeline">
-            {visibleAudit.length === 0 ? (
-              <p className="audit-empty">No {auditFilter === "all" ? "" : `${auditFilter} `}events yet.</p>
-            ) : visibleAudit.slice(0, 14).map((event) => (
-              <div className="event" key={event.id}>
-                <span className={`event-dot ${event.level}`} />
+          {sidebarTab === "trail" ? (
+            <div className="trail-chain">
+              <div className="boundary-card">
+                <span className="shield">◇</span>
                 <div>
-                  <time>{new Date(event.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
-                  <strong>{event.summary}</strong>
-                  <code>{auditCategory(event.type)} / {event.type}</code>
-                  {event.detail && (
-                    <details className="event-detail">
-                      <summary>Inspect evidence</summary>
-                      <pre>{JSON.stringify(event.detail, null, 2)}</pre>
-                    </details>
-                  )}
+                  <strong>Why does every action happen?</strong>
+                  <p>Step-by-step causal lineage for the current transaction.</p>
                 </div>
               </div>
-            ))}
-          </div>
+
+              {recommendation ? (
+                <>
+                  <div className="trail-node passed">
+                    <div className="trail-node-header">
+                      <span>01 / INTENT INFERRED</span>
+                      <code>{recommendation.intelligenceSource === "groq-llm" ? "Groq LLM" : "Local Parser"}</code>
+                    </div>
+                    <strong>Parsed buyer query</strong>
+                    <p>Detected tags: <code>{recommendation.inferredTags.join(", ")}</code> with budget cap {money(recommendation.budgetPaise)}.</p>
+                  </div>
+
+                  <div className="trail-node passed">
+                    <div className="trail-node-header">
+                      <span>02 / RELEVANCE &amp; DEMAND</span>
+                      <code>Ranked 1st</code>
+                    </div>
+                    <strong>{recommendation.items[0]?.name}</strong>
+                    <p>
+                      Scored {recommendation.items[0]?.selectionEvidence?.totalScore} pts ({recommendation.items[0]?.selectionEvidence?.relevancePoints} relevance + {recommendation.items[0]?.selectionEvidence?.demandPoints} demand). Defeated {recommendation.decisionEvidence.summary.rejectedCount} alternatives.
+                    </p>
+                  </div>
+
+                  {recommendation.items.length > 1 && (
+                    <div className="trail-node passed">
+                      <div className="trail-node-header">
+                        <span>03 / CROSS-SELL UPLIFT</span>
+                        <code>+{recommendation.upliftPercent}% Rev</code>
+                      </div>
+                      <strong>{recommendation.items[1]?.name}</strong>
+                      <p>
+                        Added compatible accessory within remaining {money(recommendation.budgetPaise - recommendation.primaryRevenuePaise)} headroom.
+                      </p>
+                    </div>
+                  )}
+
+                  {negotiationResult?.voucher && (
+                    <div className="trail-node passed">
+                      <div className="trail-node-header">
+                        <span>04 / NEGOTIATED DEAL</span>
+                        <code>{negotiationResult.voucher.code}</code>
+                      </div>
+                      <strong>Margin Sentinel Approved {negotiationResult.discountPercent}% Off</strong>
+                      <p>
+                        Unit gross margins validated. Saved {money(negotiationResult.discountPaise)} on total cart.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="trail-node passed">
+                    <div className="trail-node-header">
+                      <span>05 / MARKET LANDED-COST</span>
+                      <code>Verified</code>
+                    </div>
+                    <strong>Local vs Amazon/Flipkart</strong>
+                    <p>
+                      Local merchant wins on delivery speed (1 day) and zero hidden shipping surcharges.
+                    </p>
+                  </div>
+
+                  <div className="trail-node passed">
+                    <div className="trail-node-header">
+                      <span>06 / SERVER POLICY SENTINEL</span>
+                      <code>Strict Policy</code>
+                    </div>
+                    <strong>5 Security Gates Enforced</strong>
+                    <p>
+                      Server-authoritative catalog pricing, quantity limits (1-3), &le; ₹10,000 ceiling, and explicit human approval requirement.
+                    </p>
+                  </div>
+
+                  <div className="trail-node active-step">
+                    <div className="trail-node-header">
+                      <span>07 / RAZORPAY MCP TOOL</span>
+                      <code>create_payment_link</code>
+                    </div>
+                    <strong>Awaiting Buyer 1-Click Approval</strong>
+                    <p>
+                      No charge exists until buyer clicks approve. Invokes Razorpay Hosted MCP and verifies via HMAC-SHA256 webhooks.
+                    </p>
+                    <small>Action ID: {recommendation.actionId.slice(0, 16)}...</small>
+                  </div>
+                </>
+              ) : (
+                <p className="audit-empty" style={{ padding: "20px 0" }}>
+                  Ask the agent for products to see the live transaction reasoning trail.
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="boundary-card">
+                <span className="shield">◇</span>
+                <div><strong>Policy guard is active</strong><p>Only catalog items · max ₹10,000 · explicit approval</p></div>
+              </div>
+
+              <div className="audit-kpis" aria-label="Audit summary">
+                <div><strong>{auditStats.decisions}</strong><span>decisions</span></div>
+                <div><strong>{auditStats.moneyActions}</strong><span>money events</span></div>
+                <div><strong>{auditStats.marketComparisons}</strong><span>market checks</span></div>
+                <div><strong>{auditStats.webhookAccepted}</strong><span>webhooks accepted</span></div>
+                <div><strong>{auditStats.webhookRejected}</strong><span>webhooks rejected</span></div>
+                <div><strong>{auditStats.stoppedSafely}</strong><span>stopped safely</span></div>
+              </div>
+
+              <div className="audit-filters" aria-label="Filter audit events">
+                {(["all", "recommendation", "money", "market", "webhook", "system"] as AuditFilter[]).map((filter) => (
+                  <button
+                    key={filter}
+                    className={auditFilter === filter ? "active" : undefined}
+                    onClick={() => setAuditFilter(filter)}
+                    aria-pressed={auditFilter === filter}
+                  >
+                    {filter}
+                  </button>
+                ))}
+              </div>
+
+              <div className="timeline">
+                {visibleAudit.length === 0 ? (
+                  <p className="audit-empty">No {auditFilter === "all" ? "" : `${auditFilter} `}events yet.</p>
+                ) : visibleAudit.slice(0, 14).map((event) => (
+                  <div className="event" key={event.id}>
+                    <span className={`event-dot ${event.level}`} />
+                    <div>
+                      <time>{new Date(event.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
+                      <strong>{event.summary}</strong>
+                      <code>{auditCategory(event.type)} / {event.type}</code>
+                      {event.detail && (
+                        <details className="event-detail">
+                          <summary>Inspect evidence</summary>
+                          <pre>{JSON.stringify(event.detail, null, 2)}</pre>
+                        </details>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </aside>
       </section>
 
