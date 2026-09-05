@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Revenue Pilot — Agentic Commerce",
+  title: "Commergent — Agentic Commerce",
   description: "An explainable AI shopping agent powered by Razorpay MCP.",
 };
 

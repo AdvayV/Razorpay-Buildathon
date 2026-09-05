@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   if (isTelegramConfigured()) after(async () => {
     const notification = await sendTelegramMessage({
       title: paid ? "Demo payment confirmed" : "Demo payment failed",
-      lines: [`Action: ${body.actionId}`, "Source: Revenue Pilot local checkout"],
+      lines: [`Action: ${body.actionId}`, "Source: Commergent local checkout"],
       level: paid ? "success" : "warning",
     });
     writeAudit({

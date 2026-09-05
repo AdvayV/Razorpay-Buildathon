@@ -1,4 +1,4 @@
-# Revenue Pilot
+# Commergent
 
 **An Explainable, Policy-Guarded Agentic Storefront for the Razorpay Buildathon**
 
@@ -11,9 +11,9 @@ A buyer describes what they need in natural language, the agent models household
 
 ---
 
-## What Makes Revenue Pilot Different
+## What Makes Commergent Different
 
-Most e-commerce "AI chatbots" are simple search wrappers that hallucinate prices or blindly pass unverified totals to checkout. **Revenue Pilot** is a complete **Neuro-Symbolic Agentic Commerce Architecture**:
+Most e-commerce "AI chatbots" are simple search wrappers that hallucinate prices or blindly pass unverified totals to checkout. **Commergent** is a complete **Neuro-Symbolic Agentic Commerce Architecture**:
 
 ```
 Buyer Natural Request

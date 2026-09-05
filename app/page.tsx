@@ -414,9 +414,9 @@ export default function Home() {
   return (
     <main>
       <nav className="nav shell">
-        <a className="brand" href="#top" aria-label="Revenue Pilot home">
-          <span className="brand-mark">R</span>
-          <span>Revenue Pilot</span>
+        <a className="brand" href="#top" aria-label="Commergent home">
+          <span className="brand-mark">C</span>
+          <span>Commergent</span>
         </a>
         <div className="nav-meta">
           <span className="live-dot" /> Razorpay test mode
@@ -952,7 +952,7 @@ export default function Home() {
       </section>
 
       <footer className="shell">
-        <span>REVENUE PILOT © 2026</span>
+        <span>COMMERGENT © 2026</span>
         <span>RAZORPAY MCP · EXPLAINABLE BY DESIGN</span>
       </footer>
     </main>

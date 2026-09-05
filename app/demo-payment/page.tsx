@@ -22,7 +22,7 @@ function DemoCheckout() {
   return (
     <main className="checkout-page">
       <section className="checkout-card">
-        <div className="checkout-brand"><span className="brand-mark">R</span> Revenue Pilot</div>
+        <div className="checkout-brand"><span className="brand-mark">C</span> Commergent</div>
         {result ? (
           <div className={`checkout-result ${result}`}>
             <div>{result === "paid" ? "✓" : "!"}</div>

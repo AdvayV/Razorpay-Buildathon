@@ -1,10 +1,10 @@
-# Revenue Pilot — Flow of Events and Component Guide
+# Commergent — Flow of Events and Component Guide
 
 This document explains what happens from the moment a buyer enters a request until a Razorpay test-mode payment link is created. It also explains what every major website component means, why it matters, and what is real versus simulated in the current build.
 
 ## One-Sentence Product Description
 
-Revenue Pilot is an explainable merchant-growth agent that recommends products, estimates replenishment needs, evaluates market scenarios, negotiates a safe discount, and creates a Razorpay payment link only after explicit buyer approval.
+Commergent is an explainable merchant-growth agent that recommends products, estimates replenishment needs, evaluates market scenarios, negotiates a safe discount, and creates a Razorpay payment link only after explicit buyer approval.
 
 ## Complete Flow of Events
 
@@ -361,7 +361,7 @@ Telegram is an alert channel only. It does not determine payment truth; Razorpay
 
 ## Suggested Panel Pitch
 
-> Most shopping agents optimize only for convenience. Revenue Pilot also protects the merchant and the buyer. It makes every source visible, every recommendation explainable, every discount policy-bound, and every payment action server-validated and human-approved.
+> Most shopping agents optimize only for convenience. Commergent also protects the merchant and the buyer. It makes every source visible, every recommendation explainable, every discount policy-bound, and every payment action server-validated and human-approved.
 
 ## Main Code Map
 
@@ -384,4 +384,3 @@ Telegram is an alert channel only. It does not determine payment truth; Razorpay
 | Razorpay webhook receiver | `app/api/webhooks/razorpay/route.ts` |
 | Audit event store | `lib/audit.ts` |
 | Telegram alerts | `lib/telegram.ts` |
-

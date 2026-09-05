@@ -93,7 +93,8 @@ Respond ONLY with valid JSON in this structure:
         model,
         messages,
         temperature: 0.1, // Low temperature for deterministic, structured output
-        max_tokens: 350, // Strict token limit for economic efficiency
+        max_completion_tokens: 700,
+        reasoning_effort: "low",
         response_format: { type: "json_object" },
       }),
       signal: controller.signal,
@@ -102,7 +103,8 @@ Respond ONLY with valid JSON in this structure:
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      console.warn(`Groq API responded with status ${response.status}. Falling back to local rules.`);
+      const providerError = (await response.text()).slice(0, 500);
+      console.warn(`Groq API responded with status ${response.status}. Falling back to local rules. ${providerError}`);
       return {
         inferredTags: [],
         budgetPaise: null,

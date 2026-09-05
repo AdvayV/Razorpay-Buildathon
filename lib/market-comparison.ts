@@ -102,7 +102,7 @@ export function compareMarketOffers(itemId: string): MarketComparison | null {
   const local: MarketOffer = {
     id: `${item.id}:local-merchant`,
     channel: "local-merchant",
-    seller: "Revenue Pilot Merchant",
+    seller: "Commergent Merchant",
     itemPricePaise: item.pricePaise,
     shippingPaise: 0,
     landedPricePaise: item.pricePaise,
