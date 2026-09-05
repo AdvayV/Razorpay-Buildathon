@@ -1,7 +1,7 @@
 import { catalog, formatInr } from "@/lib/catalog";
 import { demandSignalMap, getDemandSignals, type DemandDirection } from "@/lib/demand-trends";
 import { compareMarketOffers } from "@/lib/market-comparison";
-import { isGroqConfigured, parseQueryWithGroq } from "@/lib/groq";
+import { parseQueryWithGroq } from "@/lib/groq";
 import { getQuickCommerceComparison } from "@/lib/quick-commerce";
 import { calculateConsumptionForecast, type HouseholdProfile } from "@/lib/consumption-engine";
 
@@ -169,7 +169,7 @@ export async function makeRecommendation(message: string) {
     selectionEvidence: candidateEvidence.find((candidate) => candidate.itemId === item.id),
     marketComparison: compareMarketOffers(item.id),
     quickCommerce: getQuickCommerceComparison(item.id),
-    consumptionForecast: calculateConsumptionForecast(item, householdProfile),
+    consumptionForecast: item.replenishable === false ? null : calculateConsumptionForecast(item, householdProfile),
   }));
   const rejectedCandidates = candidateEvidence.filter((candidate) => candidate.outcome === "not-selected");
 
@@ -194,6 +194,13 @@ export async function makeRecommendation(message: string) {
     incrementalRevenuePaise,
     upliftPercent,
     intelligenceSource: groqResult.source,
+    provenance: [
+      { label: "Catalog & checkout", status: "authoritative", detail: "Server catalog; re-priced at checkout" },
+      { label: "Buyer intent", status: groqResult.source === "groq-llm" ? "external" : "local", detail: groqResult.source === "groq-llm" ? "Groq; contact-like text redacted" : "Deterministic local parser" },
+      { label: "Demand", status: "simulated", detail: "Demo snapshot; ranking input only" },
+      { label: "Market prices", status: "simulated", detail: "Illustrative fee scenarios; not retailer APIs" },
+      { label: "Consumption", status: "assumption", detail: "Editable household planning estimate" },
+    ],
     decisionEvidence: {
       scoringFormula: "total score = 4 points per matched intent tag + demand adjustment (+2 rising, 0 stable, -1 falling)",
       inferredTags,

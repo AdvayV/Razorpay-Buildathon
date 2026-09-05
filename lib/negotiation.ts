@@ -1,6 +1,8 @@
 import { findCatalogItem, formatInr } from "@/lib/catalog";
 import { demandSignalMap } from "@/lib/demand-trends";
-import { isGroqConfigured } from "@/lib/groq";
+import { issueDealPassport } from "@/lib/deal-passport";
+import { merchantEconomics } from "@/lib/merchant-economics";
+import { resolveCart } from "@/lib/policy";
 
 export type NegotiationRequest = {
   actionId: string;
@@ -14,6 +16,8 @@ export type DynamicVoucher = {
   discountPercent: number;
   reason: string;
   expiresAt: number;
+  passport: string;
+  securityMode: "configured-hmac" | "demo-hmac";
 };
 
 export type NegotiationResult = {
@@ -28,20 +32,18 @@ export type NegotiationResult = {
   agentDialogue: Array<{ speaker: "Buyer Agent" | "Merchant Sentinel"; message: string }>;
 };
 
-// Rate-limiting / deduplication cache for negotiation
-const negotiationCache = new Map<string, { result: NegotiationResult; timestamp: number }>();
-
 export async function negotiateDeal(req: NegotiationRequest): Promise<NegotiationResult> {
   const signalMap = demandSignalMap();
+  if (typeof req.actionId !== "string" || req.actionId.length < 8) throw new Error("Invalid action ID.");
+  const { resolved } = resolveCart(req.items);
 
   // 1. Resolve items and base total
   let originalTotalPaise = 0;
   let maxAllowableDiscountPaise = 0;
   const itemDetails: Array<{ name: string; pricePaise: number; direction: string; maxDiscountRate: number }> = [];
 
-  for (const line of req.items) {
-    const item = findCatalogItem(line.itemId);
-    if (!item) continue;
+  for (const line of resolved) {
+    const item = findCatalogItem(line.id)!;
     const lineTotal = item.pricePaise * line.quantity;
     originalTotalPaise += lineTotal;
 
@@ -61,7 +63,12 @@ export async function negotiateDeal(req: NegotiationRequest): Promise<Negotiatio
       maxDiscountRate = Math.min(0.30, maxDiscountRate + 0.05);
     }
 
-    const itemMaxDiscount = Math.round(lineTotal * maxDiscountRate);
+    const economics = merchantEconomics[item.id];
+    if (!economics) throw new Error(`Missing merchant economics for ${item.id}.`);
+    const protectedUnitPrice = Math.ceil(economics.costPaise * (1 + economics.minimumMarginBps / 10_000));
+    const economicsDiscount = Math.max(0, lineTotal - protectedUnitPrice * line.quantity);
+    const demandDiscount = Math.round(lineTotal * maxDiscountRate);
+    const itemMaxDiscount = Math.min(economicsDiscount, demandDiscount);
     maxAllowableDiscountPaise += itemMaxDiscount;
 
     itemDetails.push({
@@ -111,12 +118,16 @@ export async function negotiateDeal(req: NegotiationRequest): Promise<Negotiatio
     const discountPercent = Math.round((finalDiscountPaise / originalTotalPaise) * 100);
     const voucherCode = `OFFER_DEAL_${discountPercent}PCT_${req.actionId.slice(0, 6).toUpperCase()}`;
 
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+    const passport = issueDealPassport({ actionId: req.actionId, lines: req.items, code: voucherCode, discountPaise: finalDiscountPaise, expiresAt });
     voucher = {
       code: voucherCode,
       discountPaise: finalDiscountPaise,
       discountPercent,
       reason: `Buyer offer of ${formatInr(requestedTargetPaise)} meets merchant margin threshold (${discountPercent}% dynamic clearance/bundle discount).`,
-      expiresAt: Date.now() + 15 * 60 * 1000,
+      expiresAt,
+      passport: passport.token,
+      securityMode: passport.securityMode,
     };
 
     merchantRationale = `Accepted: Offer of ${formatInr(requestedTargetPaise)} preserves unit gross margins. Applied ${discountPercent}% dynamic discount.`;
@@ -128,12 +139,16 @@ export async function negotiateDeal(req: NegotiationRequest): Promise<Negotiatio
     const counterOfferPaise = originalTotalPaise - finalDiscountPaise;
     const voucherCode = `COUNTER_OFFER_${discountPercent}PCT_${req.actionId.slice(0, 6).toUpperCase()}`;
 
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+    const passport = issueDealPassport({ actionId: req.actionId, lines: req.items, code: voucherCode, discountPaise: finalDiscountPaise, expiresAt });
     voucher = {
       code: voucherCode,
       discountPaise: finalDiscountPaise,
       discountPercent,
       reason: `Merchant counter-offer: ${formatInr(counterOfferPaise)} is our lowest protected price.`,
-      expiresAt: Date.now() + 15 * 60 * 1000,
+      expiresAt,
+      passport: passport.token,
+      securityMode: passport.securityMode,
     };
 
     merchantRationale = `Requested ${formatInr(requestedTargetPaise)} exceeds maximum allowable discount (${formatInr(maxAllowableDiscountPaise)}). Counter-offered ${formatInr(counterOfferPaise)} (${discountPercent}% off).`;

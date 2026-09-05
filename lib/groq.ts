@@ -1,4 +1,6 @@
-// Ultra-fast, Economical Groq API Integration with Rate Limit Protection and Local Fallback
+import "server-only";
+
+// Optional intent parsing with rate protection and deterministic local fallback.
 
 type GroqMessage = {
   role: "system" | "user" | "assistant";
@@ -59,8 +61,7 @@ export async function parseQueryWithGroq(
   }
   lastRequestTimestamp = Date.now();
 
-  // llama-3.1-8b-instant is ultra-fast, high rate limits, and extremely cost-efficient
-  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const model = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
   const endpoint = process.env.GROQ_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
   const systemPrompt = `You are the shopping intent parser for an Indian e-commerce store.
@@ -75,7 +76,7 @@ Respond ONLY with valid JSON in this structure:
 
   const messages: GroqMessage[] = [
     { role: "system", content: systemPrompt },
-    { role: "user", content: `Buyer request: "${userQuery}"` },
+    { role: "user", content: `Buyer request: "${userQuery.replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[email]").replace(/(?:\+91[-\s]?)?[6-9]\d{9}/g, "[phone]")}"` },
   ];
 
   const controller = new AbortController();

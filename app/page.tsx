@@ -41,6 +41,8 @@ type QuickCommerceComparison = {
   packSize: string;
   category: string;
   asOf: string;
+  sourceLabel: string;
+  disclaimer: string;
   offers: PlatformOffer[];
   lowestLandedCostPlatform: string;
   lowestLandedCostPaise: number;
@@ -63,10 +65,12 @@ type ConsumptionForecast = {
   dailyBurnRate: number;
   daysLifespan: number;
   reorderBufferDays: number;
-  recommendedAutopayCadenceDays: number;
+  recommendedReminderDays: number;
   nextDeliveryDate: string;
+  nextDeliveryIso: string;
   formulaExplanation: string;
   benchmarkSource: string;
+  confidence: "illustrative";
 };
 
 type MarketOffer = {
@@ -138,6 +142,8 @@ type NegotiationResult = {
     discountPercent: number;
     reason: string;
     expiresAt: number;
+    passport: string;
+    securityMode: "configured-hmac" | "demo-hmac";
   };
   merchantRationale: string;
   agentDialogue: Array<{ speaker: "Buyer Agent" | "Merchant Sentinel"; message: string }>;
@@ -158,6 +164,7 @@ type Recommendation = {
   upliftPercent: number;
   explanation: string;
   intelligenceSource?: "groq-llm" | "deterministic-fallback";
+  provenance: Array<{ label: string; status: string; detail: string }>;
   decisionTrace: Array<{ step: string; detail: string }>;
   boundaries: string[];
   demandOverview: {
@@ -247,10 +254,9 @@ export default function Home() {
   const [auditFilter, setAuditFilter] = useState<AuditFilter>("all");
   const [sidebarTab, setSidebarTab] = useState<"trail" | "audit">("trail");
 
-  // Household Profile & Autopay simulator state
+  // Household planning state
   const [familyMembers, setFamilyMembers] = useState(2);
   const [dailyServings, setDailyServings] = useState(2);
-  const [selectedPlanType, setSelectedPlanType] = useState<"one-time" | "autopay-replenishment">("one-time");
 
   // Multi-Agent Negotiation state
   const [negotiationInput, setNegotiationInput] = useState("");
@@ -311,7 +317,7 @@ export default function Home() {
     }
   }
 
-  // Live recalculate consumption when family controls are adjusted
+  // Recalculate the planning estimate when household assumptions change
   async function updateHouseholdProfile(newMembers: number, newServings: number) {
     setFamilyMembers(newMembers);
     setDailyServings(newServings);
@@ -374,9 +380,6 @@ export default function Home() {
     if (!recommendation) return;
     setBusy(true);
     setNotice(null);
-    const primaryForecast = recommendation.items[0]?.consumptionForecast;
-    const cadenceDays = primaryForecast?.recommendedAutopayCadenceDays ?? 20;
-
     try {
       const response = await fetch("/api/checkout", {
         method: "POST",
@@ -385,14 +388,7 @@ export default function Home() {
           actionId: simulateFailure ? `${recommendation.actionId}-failure` : recommendation.actionId,
           approved: true,
           simulateFailure,
-          planType: selectedPlanType,
-          recurringCadenceDays: selectedPlanType === "autopay-replenishment" ? cadenceDays : undefined,
-          voucher: negotiationResult?.voucher
-            ? {
-                code: negotiationResult.voucher.code,
-                discountPaise: negotiationResult.voucher.discountPaise,
-              }
-            : undefined,
+          dealPassport: simulateFailure ? undefined : negotiationResult?.voucher?.passport,
           items: recommendation.items.map((item) => ({ itemId: item.id, quantity: item.quantity })),
         }),
       });
@@ -409,8 +405,7 @@ export default function Home() {
 
   const baseTotalPaise = recommendation?.totalPaise ?? 0;
   const negotiationDiscountPaise = negotiationResult?.discountPaise ?? 0;
-  const autopayDiscountPaise = selectedPlanType === "autopay-replenishment" ? Math.round(baseTotalPaise * 0.05) : 0;
-  const totalDiscountPaise = negotiationDiscountPaise + autopayDiscountPaise;
+  const totalDiscountPaise = negotiationDiscountPaise;
   const effectiveTotalPaise = Math.max(100, baseTotalPaise - totalDiscountPaise);
 
   const primaryForecast = recommendation?.items[0]?.consumptionForecast;
@@ -432,7 +427,7 @@ export default function Home() {
         <div className="eyebrow"><span>✦</span> AGENTIC STOREFRONT / 01</div>
         <h1>Your quietest<br />salesperson is now<br /><em>your sharpest.</em></h1>
         <p className="hero-copy">
-          An explainable shopping agent that models household consumption, compares Quick-Commerce landed costs, and automates Razorpay 1-click &amp; UPI Autopay replenishment.
+          An explainable shopping agent that ranks products, models household use, compares transparent market scenarios, and gates Razorpay test-mode checkout.
         </p>
         <div className="proof-row">
           <div><strong>100%</strong><span>test-mode money</span></div>
@@ -473,7 +468,19 @@ export default function Home() {
             </div>
           ) : (
             <div className="recommendation">
-              <section className="demand-radar" aria-label="Demand trend summary">
+              <nav className="result-nav" aria-label="Recommendation sections">
+                <a href="#cart">Cart</a><a href="#planning">Planning</a><a href="#market">Market</a><a href="#decision">Decision</a><a href="#deal">Deal</a>
+              </nav>
+              <section className="reality-layer" aria-label="Data provenance">
+                <div className="section-intro"><span>REALITY LAYER</span><h3>Know what is real before acting.</h3></div>
+                <div className="provenance-grid">
+                  {recommendation.provenance.map((source) => (
+                    <article key={source.label}><code>{source.status}</code><strong>{source.label}</strong><p>{source.detail}</p></article>
+                  ))}
+                </div>
+              </section>
+
+              <section className="demand-radar" id="planning" aria-label="Demand trend summary">
                 <div>
                   <span>DEMAND RADAR / INDIA</span>
                   <strong>{recommendation.demandOverview.sourceLabel}</strong>
@@ -494,18 +501,18 @@ export default function Home() {
                   <p>{recommendation.explanation}</p>
                   <small>
                     {recommendation.intelligenceSource === "groq-llm"
-                      ? "Parsed with Groq LPU (llama-3.1-8b-instant) & calibrated with internet consumption benchmarks."
+                      ? "Intent parsed with Groq openai/gpt-oss-20b after contact-like text is redacted; product ranking remains deterministic."
                       : "Generated directly from local deterministic scorecard."}
                   </small>
                 </div>
               </div>
 
-              {/* Household Consumption & Autopay Simulator */}
+              {/* Editable household planning estimate */}
               {primaryForecast && (
                 <section className="household-card" aria-label="Household Consumption Modeling">
                   <div className="household-header">
-                    <span>HOUSEHOLD CONSUMPTION RADAR · BENCHMARKED</span>
-                    <span className="household-badge">Autonomous Restock Engine</span>
+                    <span>HOUSEHOLD CONSUMPTION PLANNER · ILLUSTRATIVE</span>
+                    <span className="household-badge">Editable Assumptions</span>
                   </div>
 
                   <div className="household-controls">
@@ -551,27 +558,30 @@ export default function Home() {
                       <span>Pack Lifespan</span>
                     </div>
                     <div>
-                      <strong>Day {primaryForecast.recommendedAutopayCadenceDays}</strong>
-                      <span>Auto-Restock Trigger</span>
+                      <strong>Day {primaryForecast.recommendedReminderDays}</strong>
+                      <span>Review Reminder</span>
                     </div>
                   </div>
 
                   <div className="household-formula">
-                    <strong>🧮 Restock Formula:</strong> {primaryForecast.formulaExplanation}
-                    <small>Standard: {primaryForecast.benchmarkSource} • Next projected delivery: <b>{primaryForecast.nextDeliveryDate}</b></small>
+                    <strong>🧮 Planning formula:</strong> {primaryForecast.formulaExplanation}
+                    <small>Assumption: {primaryForecast.benchmarkSource} • Suggested review: <b>{primaryForecast.nextDeliveryDate}</b></small>
                   </div>
+                  <a className="calendar-link" href={`/api/replenishment/calendar?itemId=${encodeURIComponent(primaryForecast.itemId)}&familyMembers=${familyMembers}&dailyServingsPerMember=${dailyServings}`}>
+                    Add stock-review reminder to calendar (.ics) →
+                  </a>
                 </section>
               )}
 
-              {/* Live Quick-Commerce Radar Matrix */}
+              {/* Simulated Quick-Commerce benchmark */}
               {primaryQC && (
-                <section className="qc-board" aria-label="Quick-Commerce Radar">
+                <section className="qc-board" id="market" aria-label="Quick-Commerce Radar">
                   <div className="qc-heading">
                     <div>
-                      <span>QUICK-COMMERCE RADAR · TRUE LANDED COST</span>
+                      <span>SIMULATED QUICK-COMMERCE SCENARIO · LANDED COST</span>
                       <h3>How does our price compare against BigBasket, Blinkit &amp; Zepto?</h3>
                     </div>
-                    <code>True Landed Cost</code>
+                    <code>Not live data</code>
                   </div>
 
                   <div className="qc-table-wrap">
@@ -616,11 +626,12 @@ export default function Home() {
 
                   <div style={{ padding: "12px 18px", background: "#f5f9eb", borderTop: "1px solid var(--line)", fontSize: "11px", color: "#36570e" }}>
                     <strong>✦ Arbitrage Verdict:</strong> {primaryQC.arbitrageSummary}
+                    <small className="source-note">{primaryQC.sourceLabel} · {primaryQC.disclaimer}</small>
                   </div>
                 </section>
               )}
 
-              <section className="reasoning-ledger" aria-label="Recommendation evidence">
+              <section className="reasoning-ledger" id="decision" aria-label="Recommendation evidence">
                 <div className="ledger-heading">
                   <div><span>EVIDENCE LEDGER</span><h3>Why these products?</h3></div>
                   <code>{recommendation.moneyAction.state.replaceAll("-", " ")}</code>
@@ -659,7 +670,7 @@ export default function Home() {
                 </div>
               </section>
 
-              <div className="product-grid">
+              <div className="product-grid" id="cart">
                 {recommendation.items.map((item, index) => (
                   <article className={`product-card ${item.accent}`} key={item.id}>
                     <div className="product-topline">
@@ -681,13 +692,13 @@ export default function Home() {
               </div>
 
               {/* Multi-Agent Dynamic Negotiation */}
-              <section className="negotiation-box" aria-label="Agent Negotiation">
+              <section className="negotiation-box" id="deal" aria-label="Agent Negotiation">
                 <div className="negotiation-header">
                   <span>MULTI-AGENT NEGOTIATION · DYNAMIC DISCOUNTING</span>
-                  <span className="negotiation-badge">Autonomous Bargain</span>
+                  <span className="negotiation-badge">Signed Deal Passport</span>
                 </div>
                 <p style={{ margin: "0 0 10px", fontSize: "12px", color: "var(--muted)" }}>
-                  Negotiate a bundle deal. The Merchant Sentinel evaluates unit gross margins &amp; demand velocity before issuing a dynamic voucher.
+                  Negotiate a bundle deal. The server checks private unit economics and binds any discount to this action, cart and 15-minute expiry.
                 </p>
 
                 <div className="negotiation-chips">
@@ -726,35 +737,16 @@ export default function Home() {
                     ))}
                     {negotiationResult.voucher && (
                       <div style={{ marginTop: "6px", padding: "8px", background: "#eef6d6", borderLeft: "3px solid #829d38", fontSize: "11px" }}>
-                        <strong style={{ display: "block", color: "#446914" }}>✓ Voucher Active: {negotiationResult.voucher.code}</strong>
-                        <span>Saved {money(negotiationResult.discountPaise)} ({negotiationResult.discountPercent}% off). Applied directly to checkout.</span>
+                        <strong style={{ display: "block", color: "#446914" }}>✓ Signed deal: {negotiationResult.voucher.code}</strong>
+                        <span>Saved {money(negotiationResult.discountPaise)} ({negotiationResult.discountPercent}% off). Cart-bound · expires in 15 min · {negotiationResult.voucher.securityMode}.</span>
                       </div>
                     )}
                   </div>
                 )}
               </section>
 
-              {/* Approval & Autopay Cadence Selector */}
+              {/* Explicit one-time payment approval */}
               <div className="approval-box">
-                <div className="cadence-selector">
-                  <div
-                    className={`cadence-option ${selectedPlanType === "one-time" ? "selected" : ""}`}
-                    onClick={() => setSelectedPlanType("one-time")}
-                  >
-                    <strong>● One-Time Delivery</strong>
-                    <span>Standard single purchase via Razorpay payment link.</span>
-                  </div>
-
-                  <div
-                    className={`cadence-option ${selectedPlanType === "autopay-replenishment" ? "selected" : ""}`}
-                    onClick={() => setSelectedPlanType("autopay-replenishment")}
-                  >
-                    <mark>Save Extra 5% · UPI Autopay</mark>
-                    <strong>✦ Autonomous Replenish Every {primaryForecast?.recommendedAutopayCadenceDays ?? 20} Days</strong>
-                    <span>Auto-delivers on Day {primaryForecast?.recommendedAutopayCadenceDays ?? 20}. Cancel anytime.</span>
-                  </div>
-                </div>
-
                 <div>
                   <span>TOTAL / {recommendation.items.length} ITEMS</span>
                   <strong>{money(effectiveTotalPaise)}</strong>
@@ -770,9 +762,7 @@ export default function Home() {
                 </div>
 
                 <button className="primary" onClick={() => checkout(false)} disabled={busy}>
-                  {selectedPlanType === "autopay-replenishment"
-                    ? `Authorize UPI Autopay (${money(effectiveTotalPaise)}) →`
-                    : `Approve & create payment link (${money(effectiveTotalPaise)}) →`}
+                  {`Approve & create payment link (${money(effectiveTotalPaise)}) →`}
                 </button>
                 <p>Nothing happens without this click. Server enforces policy bounds, server catalog prices, and spending limits.</p>
               </div>
@@ -840,10 +830,10 @@ export default function Home() {
                   {primaryForecast && (
                     <div className="trail-node passed">
                       <div className="trail-node-header">
-                        <span>03 / CONSUMPTION &amp; RESTOCK CADENCE</span>
+                        <span>03 / CONSUMPTION PLANNING</span>
                         <code>{primaryForecast.daysLifespan} Day Lifespan</code>
                       </div>
-                      <strong>Calibrated Burn Rate: {primaryForecast.dailyBurnRate}{primaryForecast.packUnit}/day</strong>
+                      <strong>Illustrative Burn Rate: {primaryForecast.dailyBurnRate}{primaryForecast.packUnit}/day</strong>
                       <p>
                         {primaryForecast.formulaExplanation}
                       </p>
@@ -853,10 +843,10 @@ export default function Home() {
                   {primaryQC && (
                     <div className="trail-node passed">
                       <div className="trail-node-header">
-                        <span>04 / QUICK-COMMERCE PRICE RADAR</span>
-                        <code>Landed Cost Checked</code>
+                        <span>04 / SIMULATED MARKET SCENARIO</span>
+                        <code>Demo Benchmark</code>
                       </div>
-                      <strong>BigBasket, Blinkit &amp; Zepto Arbitrage</strong>
+                      <strong>Illustrative BigBasket, Blinkit &amp; Zepto comparison</strong>
                       <p>
                         {primaryQC.arbitrageSummary}
                       </p>
@@ -869,9 +859,9 @@ export default function Home() {
                         <span>05 / NEGOTIATED DEAL</span>
                         <code>{negotiationResult.voucher.code}</code>
                       </div>
-                      <strong>Margin Sentinel Approved {negotiationResult.discountPercent}% Off</strong>
+                      <strong>Signed Deal Passport Approved {negotiationResult.discountPercent}% Off</strong>
                       <p>
-                        Unit gross margins validated. Saved {money(negotiationResult.discountPaise)} on cart.
+                        Private economics validated; the discount is signed and bound to this exact cart and action.
                       </p>
                     </div>
                   )}
@@ -890,12 +880,10 @@ export default function Home() {
                   <div className="trail-node active-step">
                     <div className="trail-node-header">
                       <span>07 / RAZORPAY MCP TOOL</span>
-                      <code>{selectedPlanType === "autopay-replenishment" ? "create_autopay_mandate" : "create_payment_link"}</code>
+                      <code>create_payment_link</code>
                     </div>
                     <strong>
-                      {selectedPlanType === "autopay-replenishment"
-                        ? `Awaiting UPI Autopay Mandate Approval (Every ${primaryForecast?.recommendedAutopayCadenceDays ?? 20}d)`
-                        : "Awaiting 1-Click Payment Approval"}
+                      Awaiting 1-Click Payment Approval
                     </strong>
                     <p>
                       No charge exists until buyer clicks approve. Invokes Razorpay Hosted MCP and verifies via HMAC-SHA256 webhooks.

@@ -5,12 +5,7 @@ export const MAX_ITEMS = 5;
 
 export type CartLine = { itemId: string; quantity: number };
 
-export type VoucherInput = {
-  code: string;
-  discountPaise: number;
-};
-
-export type PlanType = "one-time" | "autopay-replenishment";
+export type AuthorizedDiscount = { code: string; discountPaise: number };
 
 export class MoneyPolicyError extends Error {
   constructor(
@@ -22,14 +17,7 @@ export class MoneyPolicyError extends Error {
   }
 }
 
-export function validateMoneyAction(
-  lines: CartLine[],
-  approved: boolean,
-  voucher?: VoucherInput | null,
-  planType: PlanType = "one-time",
-  recurringCadenceDays?: number,
-) {
-  if (!approved) throw new MoneyPolicyError("Explicit buyer approval is required.", "APPROVAL_REQUIRED");
+export function resolveCart(lines: CartLine[]) {
   if (!Array.isArray(lines) || lines.length === 0) throw new MoneyPolicyError("Cart is empty.", "EMPTY_CART");
   if (lines.length > MAX_ITEMS) {
     throw new MoneyPolicyError(`Cart exceeds the ${MAX_ITEMS}-item limit.`, "TOO_MANY_ITEMS");
@@ -53,28 +41,15 @@ export function validateMoneyAction(
     throw new MoneyPolicyError("This purchase exceeds the agent's ₹10,000 spending boundary.", "AMOUNT_LIMIT");
   }
 
-  let discountPaise = 0;
-  if (voucher && typeof voucher.discountPaise === "number" && voucher.discountPaise > 0) {
-    // Enforce merchant margin limit: max 35% discount allowed on any cart
-    const maxDiscountAllowed = Math.round(originalAmountPaise * 0.35);
-    discountPaise = Math.min(voucher.discountPaise, maxDiscountAllowed);
+  return { resolved, originalAmountPaise };
+}
+
+export function validateMoneyAction(lines: CartLine[], approved: boolean, discount?: AuthorizedDiscount | null) {
+  if (!approved) throw new MoneyPolicyError("Explicit buyer approval is required.", "APPROVAL_REQUIRED");
+  const { resolved, originalAmountPaise } = resolveCart(lines);
+  const discountPaise = discount?.discountPaise ?? 0;
+  if (!Number.isSafeInteger(discountPaise) || discountPaise < 0 || discountPaise >= originalAmountPaise) {
+    throw new MoneyPolicyError("Authorized discount is outside the cart boundary.", "INVALID_DISCOUNT");
   }
-
-  // 5% additional discount for automated recurring replenishment subscribers
-  if (planType === "autopay-replenishment") {
-    const subscriberDiscount = Math.round(originalAmountPaise * 0.05);
-    discountPaise = Math.min(originalAmountPaise * 0.35, discountPaise + subscriberDiscount);
-  }
-
-  const finalAmountPaise = Math.max(100, originalAmountPaise - discountPaise); // Minimum 1 INR
-
-  return {
-    resolved,
-    amountPaise: finalAmountPaise,
-    originalAmountPaise,
-    discountPaise,
-    voucherCode: voucher?.code,
-    planType,
-    recurringCadenceDays: planType === "autopay-replenishment" ? (recurringCadenceDays ?? 20) : undefined,
-  };
+  return { resolved, amountPaise: originalAmountPaise - discountPaise, originalAmountPaise, discountPaise, voucherCode: discount?.code };
 }

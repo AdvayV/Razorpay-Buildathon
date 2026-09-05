@@ -1,5 +1,4 @@
-// Live Quick-Commerce Price Radar & Landed-Cost Arbitrage Engine
-// Compares Local Store vs BigBasket, Blinkit, Zepto, and Amazon Fresh
+// Simulated landed-cost scenarios for a panel demo. No retailer API is queried.
 
 import { findCatalogItem } from "@/lib/catalog";
 
@@ -26,12 +25,14 @@ export type QuickCommerceComparison = {
   packSize: string;
   category: string;
   asOf: string;
+  sourceLabel: string;
+  disclaimer: string;
   offers: PlatformOffer[];
   lowestLandedCostPlatform: string;
   lowestLandedCostPaise: number;
   localStoreLandedCostPaise: number;
   localStoreDiffPaise: number; // positive = local is cheaper, negative = competitor is cheaper
-  priceMatchApplied: boolean;
+  priceMatchApplied: boolean; // historical field name: means available, never applied to checkout
   priceMatchDiscountPaise: number;
   priceMatchAdjustedPricePaise: number;
   arbitrageSummary: string;
@@ -162,14 +163,16 @@ export function getQuickCommerceComparison(itemId: string): QuickCommerceCompari
   const arbitrageSummary =
     localDiffPaise >= 0
       ? `Local store offers the best true landed cost (₹${(basePrice / 100).toFixed(0)}) because Quick-Commerce apps add ₹35-₹42 in delivery/surge fees.`
-      : `BigBasket offers a lower base price (₹${(lowestCompetitorBasePrice / 100).toFixed(0)}). Autonomous Price Match applied: our store matches ₹${(priceMatchAdjustedPricePaise / 100).toFixed(0)} with free delivery!`;
+      : `In this simulated scenario, BigBasket has a lower base price. A merchant could review a price-match opportunity at ₹${(priceMatchAdjustedPricePaise / 100).toFixed(0)}; checkout pricing is unchanged.`;
 
   const result: QuickCommerceComparison = {
     itemId: item.id,
     itemName: item.name,
     packSize: item.packSize,
     category: item.category,
-    asOf: new Date().toLocaleDateString("en-IN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }),
+    asOf: "Demo assumptions v1",
+    sourceLabel: "Simulated retailer benchmark",
+    disclaimer: "Illustrative prices, fees, stock and delivery times; not fetched from retailer APIs and never used to set checkout price.",
     offers,
     lowestLandedCostPlatform: lowestPlatform,
     lowestLandedCostPaise: lowestLandedCost,

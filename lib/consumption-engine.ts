@@ -1,5 +1,4 @@
-// Intelligent Household Consumption Forecasting & Autonomous Replenishment Engine
-// Internet-calibrated benchmarks for Indian household staples and personal care
+// Household planning estimates. Inputs are editable assumptions, not measured usage.
 
 export type HouseholdProfile = {
   familyMembers: number;
@@ -70,10 +69,12 @@ export type ConsumptionForecast = {
   dailyBurnRate: number; // total units consumed per day across family
   daysLifespan: number; // total days until pack runs out
   reorderBufferDays: number; // trigger auto-order when 2-3 days remain
-  recommendedAutopayCadenceDays: number; // rounded cadence for Razorpay Autopay
-  nextDeliveryDate: string; // ISO date or formatted string
+  recommendedReminderDays: number;
+  nextDeliveryDate: string;
+  nextDeliveryIso: string;
   formulaExplanation: string;
   benchmarkSource: string;
+  confidence: "illustrative";
 };
 
 // Parse pack size like "500g", "150ml", "1kg", "5L", "250g"
@@ -109,7 +110,7 @@ export function getBenchmarkForItem(name: string, category: string, tags: string
     unitServingSize: 15,
     servingUnit: "g",
     defaultServingsPerDay: 2,
-    industryBenchmarkNotes: "Standard daily consumable average",
+    industryBenchmarkNotes: "Fallback planning assumption; edit household inputs before using",
   };
 }
 
@@ -133,17 +134,18 @@ export function calculateConsumptionForecast(
 
   // Buffer: reorder 2 days before pack empties (or 1 day if short cycle)
   const reorderBufferDays = daysLifespan <= 7 ? 1 : 2;
-  const recommendedAutopayCadenceDays = Math.max(3, daysLifespan - reorderBufferDays);
+  const recommendedReminderDays = Math.max(3, daysLifespan - reorderBufferDays);
 
   const nextDelivery = new Date();
-  nextDelivery.setDate(nextDelivery.getDate() + recommendedAutopayCadenceDays);
+  nextDelivery.setDate(nextDelivery.getDate() + recommendedReminderDays);
   const nextDeliveryDate = nextDelivery.toLocaleDateString("en-IN", {
     month: "short",
     day: "numeric",
     year: "numeric",
   });
+  const nextDeliveryIso = nextDelivery.toISOString().slice(0, 10);
 
-  const formulaExplanation = `${servingSize}${benchmark.servingUnit}/cup × ${servingsPerDay} cups/day × ${members} members = ${dailyBurnRate}${unit}/day. ${packQuantity}${unit} pack lasts ~${daysLifespan} days. Auto-replenish triggered on Day ${recommendedAutopayCadenceDays} (2-day buffer).`;
+  const formulaExplanation = `${servingSize}${benchmark.servingUnit} per use × ${servingsPerDay} uses/day × ${members} members = ${dailyBurnRate}${unit}/day. The ${packQuantity}${unit} pack lasts about ${daysLifespan} days; set a review reminder on Day ${recommendedReminderDays}.`;
 
   return {
     itemId: item.id,
@@ -156,9 +158,11 @@ export function calculateConsumptionForecast(
     dailyBurnRate,
     daysLifespan,
     reorderBufferDays,
-    recommendedAutopayCadenceDays,
+    recommendedReminderDays,
     nextDeliveryDate,
+    nextDeliveryIso,
     formulaExplanation,
     benchmarkSource: benchmark.industryBenchmarkNotes,
+    confidence: "illustrative",
   };
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { negotiateDeal, type NegotiationRequest } from "@/lib/negotiation";
 import { formatInr } from "@/lib/catalog";
 import { writeAudit } from "@/lib/audit";
+import { MoneyPolicyError } from "@/lib/policy";
 
 export async function POST(request: Request) {
   try {
@@ -32,6 +33,8 @@ export async function POST(request: Request) {
         discountPaise: result.discountPaise,
         discountPercent: result.discountPercent,
         voucherCode: result.voucher?.code,
+        dealAuthorization: result.voucher ? "signed-cart-bound-passport" : "none",
+        securityMode: result.voucher?.securityMode,
         merchantRationale: result.merchantRationale,
         dialogue: result.agentDialogue,
       },
@@ -41,6 +44,10 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   } catch (err) {
     console.error("Negotiation error:", err);
-    return NextResponse.json({ error: "Failed to process negotiation offer." }, { status: 500 });
+    const invalidCart = err instanceof MoneyPolicyError;
+    return NextResponse.json(
+      { error: invalidCart ? `Negotiation blocked: ${err.message}` : "Failed to process negotiation offer." },
+      { status: invalidCart ? 422 : 500 },
+    );
   }
 }

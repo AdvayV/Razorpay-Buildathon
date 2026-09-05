@@ -17,6 +17,9 @@ export async function POST(request: Request) {
     if (!item) {
       return NextResponse.json({ error: `Item not found: ${body.itemId}` }, { status: 404 });
     }
+    if (item.replenishable === false) {
+      return NextResponse.json({ error: `${item.name} is durable and does not support replenishment forecasts.` }, { status: 422 });
+    }
 
     const profile: HouseholdProfile = {
       familyMembers: body.profile?.familyMembers ? Math.max(1, Number(body.profile.familyMembers)) : 2,

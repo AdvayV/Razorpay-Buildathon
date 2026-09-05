@@ -8,6 +8,7 @@ export type CatalogItem = {
   trendQuery: string;
   tags: string[];
   accent: string;
+  replenishable?: boolean;
 };
 
 // Calibrated market prices. The server remains the only authority for checkout amounts.
@@ -143,6 +144,7 @@ export const catalog: CatalogItem[] = [
     trendQuery: "stainless steel utensils",
     tags: ["utensil", "utensils", "kitchen", "cooking", "steel", "home"],
     accent: "violet",
+    replenishable: false,
   },
 ];
 
