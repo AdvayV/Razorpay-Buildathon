@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Commergent — Agentic Commerce",
-  description: "An explainable AI shopping agent powered by Razorpay MCP.",
+  description: "A shopping agent demo with simulated price comparisons, stock reminders, and one-time Razorpay test checkout.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
